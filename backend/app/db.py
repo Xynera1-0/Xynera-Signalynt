@@ -1,7 +1,9 @@
 import os
+import time
 from contextlib import contextmanager
 
 import psycopg2
+from psycopg2 import OperationalError
 from psycopg2.extras import RealDictCursor
 
 
@@ -26,13 +28,28 @@ def get_db_cursor():
         raise RuntimeError("DATABASE_URL is not set")
 
     connect_timeout = _env_int("DB_CONNECT_TIMEOUT_SECONDS", 8)
+    connect_attempts = _env_int("DB_CONNECT_ATTEMPTS", 3)
+    retry_delay_ms = _env_int("DB_CONNECT_RETRY_DELAY_MS", 250)
     statement_timeout_ms = _env_int("DB_STATEMENT_TIMEOUT_MS", 15000)
 
-    conn = psycopg2.connect(
-        database_url,
-        connect_timeout=connect_timeout,
-        options=f"-c statement_timeout={statement_timeout_ms}",
-    )
+    conn = None
+    for attempt in range(connect_attempts):
+        try:
+            conn = psycopg2.connect(
+                database_url,
+                connect_timeout=connect_timeout,
+                options=f"-c statement_timeout={statement_timeout_ms}",
+            )
+            break
+        except OperationalError:
+            if attempt == connect_attempts - 1:
+                raise
+            # Short exponential backoff smooths over transient network hiccups.
+            time.sleep((retry_delay_ms / 1000.0) * (2**attempt))
+
+    if conn is None:
+        raise RuntimeError("Failed to establish database connection")
+
     conn.autocommit = False
 
     try:

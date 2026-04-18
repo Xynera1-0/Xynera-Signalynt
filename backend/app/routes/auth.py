@@ -131,8 +131,6 @@ def _token_user(credentials: HTTPAuthorizationCredentials | None = Depends(beare
 
 @router.post("/register")
 def register_user(payload: RegisterRequest):
-    _ensure_password_hash_column()
-
     query = """
         INSERT INTO public.users (name, email, password_hash)
         VALUES (%s, %s, %s)
@@ -140,6 +138,7 @@ def register_user(payload: RegisterRequest):
     """
 
     try:
+        _ensure_password_hash_column()
         with get_db_cursor() as cursor:
             cursor.execute(
                 query,
@@ -165,8 +164,6 @@ def register_user(payload: RegisterRequest):
 
 @router.post("/login")
 def login_user(payload: LoginRequest):
-    _ensure_password_hash_column()
-
     query = """
         SELECT id, name, email, created_at, password_hash
         FROM public.users
@@ -174,6 +171,7 @@ def login_user(payload: LoginRequest):
     """
 
     try:
+        _ensure_password_hash_column()
         with get_db_cursor() as cursor:
             cursor.execute(query, (payload.email,))
             user = cursor.fetchone()
@@ -213,10 +211,9 @@ def login_user(payload: LoginRequest):
 
 @router.post("/google")
 def google_login(payload: GoogleLoginRequest):
-    _ensure_password_hash_column()
-    _ensure_google_auth_columns()
-
     try:
+        _ensure_password_hash_column()
+        _ensure_google_auth_columns()
         token_payload = google_id_token.verify_oauth2_token(
             payload.id_token,
             google_requests.Request(),
