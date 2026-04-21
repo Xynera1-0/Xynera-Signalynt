@@ -1,4 +1,11 @@
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
+
+# Load env vars BEFORE any other imports that might use them
+from dotenv import load_dotenv
+env_path = Path(__file__).resolve().parents[1] / ".env"
+load_dotenv(env_path, override=True)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,8 +15,26 @@ from app.tools.setup import setup_tool_registry
 from app.tools.mcp_client import init_mcp_client, close_mcp_client
 from app.api.research import router as research_router
 from app.api.alerts import router as alerts_router
+from app.routes.auth import router as auth_router
 
 settings = get_settings()
+
+
+def _normalize_origin(origin: str) -> str:
+    return origin.strip().rstrip("/")
+
+
+frontend_url = _normalize_origin(os.getenv("FRONTEND_URL", settings.frontend_url))
+allowed_origins = sorted(
+    {
+        frontend_url,
+        settings.frontend_url,
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    }
+)
 
 
 @asynccontextmanager
@@ -30,13 +55,16 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_url, "http://localhost:5173"],
+    allow_origins=allowed_origins,
+    # Allow local frontend origins across ports during development.
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # ── Routers ────────────────────────────────────────────────────────────────
+app.include_router(auth_router)
 app.include_router(research_router)
 app.include_router(alerts_router)
 
@@ -49,4 +77,3 @@ def read_root():
 @app.get("/health")
 def health():
     return {"status": "healthy"}
-
