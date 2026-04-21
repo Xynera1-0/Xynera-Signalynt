@@ -10,12 +10,16 @@ load_dotenv(env_path, override=True)
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .routes.agents import router as agents_router
 from app.core.config import get_settings
 from app.tools.setup import setup_tool_registry
 from app.tools.mcp_client import init_mcp_client, close_mcp_client
 from app.api.research import router as research_router
 from app.api.alerts import router as alerts_router
 from app.routes.auth import router as auth_router
+from .routes.chat import router as chat_router
+from .routes.graph import router as graph_router
+from .neo4j_db import close_neo4j_driver
 
 settings = get_settings()
 
@@ -67,6 +71,14 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(research_router)
 app.include_router(alerts_router)
+app.include_router(agents_router)
+app.include_router(chat_router)
+app.include_router(graph_router)
+
+
+@app.on_event("shutdown")
+def shutdown_neo4j() -> None:
+    close_neo4j_driver()
 
 
 @app.get("/")

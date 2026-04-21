@@ -10,6 +10,12 @@
     radial-gradient(circle at 10% 15%, rgba(68, 205, 224, 0.18), transparent 45%),
     radial-gradient(circle at 80% 0%, rgba(255, 111, 60, 0.15), transparent 38%),
     linear-gradient(150deg, #020617 0%, #0b1120 45%, #101828 100%);
+  --btn-primary-bg: #14b8a6;
+  --btn-primary-hover-bg: #2dd4bf;
+  --btn-primary-text: #020617;
+  --btn-ghost-hover-bg: rgba(45, 212, 191, 0.12);
+  --btn-ghost-hover-text: #ccfbf1;
+  --btn-ghost-hover-border: rgba(45, 212, 191, 0.55);
   --text-main: #e2e8f0;
   --text-soft: #cbd5e1;
   --text-muted: #94a3b8;
@@ -29,6 +35,12 @@ html[data-theme="light"] {
     radial-gradient(circle at 0% 0%, rgba(252, 216, 130, 0.45), transparent 48%),
     radial-gradient(circle at 85% 10%, rgba(109, 194, 255, 0.35), transparent 42%),
     linear-gradient(145deg, #faf7ef 0%, #eff6ff 55%, #fdf2f8 100%);
+  --btn-primary-bg: #0f766e;
+  --btn-primary-hover-bg: #0d9488;
+  --btn-primary-text: #f8fafc;
+  --btn-ghost-hover-bg: rgba(15, 118, 110, 0.14);
+  --btn-ghost-hover-text: #115e59;
+  --btn-ghost-hover-border: rgba(15, 118, 110, 0.65);
   --text-main: #0f172a;
   --text-soft: #334155;
   --text-muted: #64748b;
@@ -99,14 +111,26 @@ html[data-theme="light"] .text-brand-300 {
   }
 
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-brand-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-brand-400 disabled:cursor-not-allowed disabled:opacity-60;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60;
+    background: var(--btn-primary-bg);
+    color: var(--btn-primary-text);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: var(--btn-primary-hover-bg);
   }
 
   .btn-ghost {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition hover:border-brand-400/50 hover:text-brand-100;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition;
     border: 1px solid var(--ghost-border);
     background: var(--ghost-bg);
     color: var(--text-soft);
+  }
+
+  .btn-ghost:hover:not(:disabled) {
+    border-color: var(--btn-ghost-hover-border);
+    background: var(--btn-ghost-hover-bg);
+    color: var(--btn-ghost-hover-text);
   }
 
   .input-field {

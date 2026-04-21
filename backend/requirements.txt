@@ -63,3 +63,5 @@ google-auth>=2.38.0
 requests>=2.32.0
 passlib[argon2]>=1.7.4
 python-dotenv>=1.0.1
+neo4j>=5.28.0
+google-genai>=0.3.0
