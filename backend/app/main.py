@@ -9,7 +9,11 @@ load_dotenv(env_path, override=True)
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .routes.agents import router as agents_router
 from .routes.auth import router as auth_router
+from .routes.chat import router as chat_router
+from .routes.graph import router as graph_router
+from .neo4j_db import close_neo4j_driver
 
 app = FastAPI(title="Xynera Backend API")
 
@@ -39,6 +43,14 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(agents_router)
+app.include_router(chat_router)
+app.include_router(graph_router)
+
+
+@app.on_event("shutdown")
+def shutdown_neo4j() -> None:
+    close_neo4j_driver()
 
 
 @app.get("/")

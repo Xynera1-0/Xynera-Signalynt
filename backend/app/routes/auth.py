@@ -47,6 +47,10 @@ class GoogleLoginRequest(BaseModel):
     id_token: str = Field(min_length=10)
 
 
+class RefreshRequest(BaseModel):
+    refresh_token: str = Field(min_length=10)
+
+
 def _ensure_password_hash_column() -> None:
     """Ensure password hash column exists on public.users."""
     global _password_hash_ready
@@ -308,3 +312,44 @@ def current_user(token_user=Depends(_token_user)):
         raise HTTPException(status_code=404, detail="User not found")
 
     return {"user": user}
+
+
+@router.post("/refresh")
+def refresh_access_token(payload: RefreshRequest):
+    try:
+        token_payload = decode_token(payload.refresh_token)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    if token_payload.get("type") != "refresh":
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    user_id = token_payload.get("sub")
+    email = token_payload.get("email")
+    if not user_id or not email:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    query = """
+        SELECT id, email
+        FROM public.users
+        WHERE id = %s;
+    """
+
+    try:
+        with get_db_cursor() as cursor:
+            cursor.execute(query, (user_id,))
+            user = cursor.fetchone()
+    except Exception as exc:
+        _raise_db_http_exception(exc)
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    access_token = create_access_token(str(user["id"]), user["email"])
+    refresh_token = create_refresh_token(str(user["id"]), user["email"])
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+    }
