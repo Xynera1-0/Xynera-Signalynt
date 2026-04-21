@@ -24,8 +24,6 @@ const INITIAL_ASSISTANT_MESSAGE = {
   metadata: {},
 };
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-
 function buildAssistantReply(input, selectedToolLabel) {
   const normalized = input.trim();
   if (!normalized) {
@@ -45,40 +43,6 @@ function formatChatTitle(input) {
   return words.length < trimmed.length ? `${words}...` : words;
 }
 
-async function postJson(path, body, accessToken) {
-  const response = await fetch(`${API_URL}${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-    },
-    body: JSON.stringify(body),
-  });
-
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload.detail || "Request failed");
-  }
-
-  return payload;
-}
-
-async function getJson(path, accessToken) {
-  const response = await fetch(`${API_URL}${path}`, {
-    method: "GET",
-    headers: {
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-    },
-  });
-
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload.detail || "Request failed");
-  }
-
-  return payload;
-}
-
 function createConversation() {
   return {
     id: crypto.randomUUID(),
@@ -95,7 +59,7 @@ function createConversation() {
 }
 
 export default function ChatPage() {
-  const { user, accessToken } = useAuth();
+  const { user, accessToken, apiGet, apiPost } = useAuth();
   const [input, setInput] = useState("");
   const [conversations, setConversations] = useState([createConversation()]);
   const [activeConversationId, setActiveConversationId] = useState(conversations[0].id);
@@ -117,7 +81,7 @@ export default function ChatPage() {
       }
 
       try {
-        const listPayload = await getJson("/chat/conversations", accessToken);
+        const listPayload = await apiGet("/chat/conversations");
         const remoteConversations = listPayload.conversations || [];
 
         if (!remoteConversations.length) {
@@ -126,7 +90,7 @@ export default function ChatPage() {
 
         const withMessages = await Promise.all(
           remoteConversations.map(async (conversation) => {
-            const messagesPayload = await getJson(`/chat/conversations/${conversation.id}/messages`, accessToken);
+            const messagesPayload = await apiGet(`/chat/conversations/${conversation.id}/messages`);
             const messages = (messagesPayload.messages || []).map((item) => ({
               id: item.id,
               role: item.role,
@@ -164,7 +128,7 @@ export default function ChatPage() {
     return () => {
       cancelled = true;
     };
-  }, [accessToken]);
+  }, [accessToken, apiGet]);
 
   function createNewConversation() {
     const nextConversation = createConversation();
@@ -281,30 +245,22 @@ export default function ChatPage() {
 
     try {
       if (accessToken) {
-        await postJson(
-          "/chat/conversations",
-          {
-            id: conversationId,
-            title: conversationTitle,
-            tool: selectedTool,
-          },
-          accessToken
-        );
+        await apiPost("/chat/conversations", {
+          id: conversationId,
+          title: conversationTitle,
+          tool: selectedTool,
+        });
 
-        await postJson(
-          `/chat/conversations/${conversationId}/messages`,
-          {
-            id: userMessage.id,
-            role: "user",
-            content: userMessage.content,
-            tool: userMessage.tool,
-            ui_type: userMessage.uiType,
-            intent_detected: userMessage.intentDetected,
-            signal_ids: userMessage.signalIds,
-            metadata: userMessage.metadata,
-          },
-          accessToken
-        );
+        await apiPost(`/chat/conversations/${conversationId}/messages`, {
+          id: userMessage.id,
+          role: "user",
+          content: userMessage.content,
+          tool: userMessage.tool,
+          ui_type: userMessage.uiType,
+          intent_detected: userMessage.intentDetected,
+          signal_ids: userMessage.signalIds,
+          metadata: userMessage.metadata,
+        });
       }
 
       if (shouldRunAgent) {
@@ -321,7 +277,7 @@ export default function ChatPage() {
           },
         };
 
-        const response = await postJson("/agents/content-generation/run", payload, accessToken);
+        const response = await apiPost("/agents/content-generation/run", payload);
         const rendered = formatAgentResponse(response.result);
         const flyerImage = response.flyer_image;
         const flyerImageDataUrl = flyerImage?.base64
@@ -361,23 +317,19 @@ export default function ChatPage() {
         );
 
         if (accessToken) {
-          await postJson(
-            `/chat/conversations/${conversationId}/messages`,
-            {
-              id: assistantMessage.id,
-              role: "assistant",
-              content: rendered,
-              tool: selectedToolLabel,
-              ui_type: flyerImageDataUrl ? "flyer" : "content_bundle",
-              intent_detected: selectedTool,
-              signal_ids: response.result?.signal_ids || [],
-              metadata: {
-                flyer_image_source_url: flyerImage?.source_url || null,
-                agent_result: response.result,
-              },
+          await apiPost(`/chat/conversations/${conversationId}/messages`, {
+            id: assistantMessage.id,
+            role: "assistant",
+            content: rendered,
+            tool: selectedToolLabel,
+            ui_type: flyerImageDataUrl ? "flyer" : "content_bundle",
+            intent_detected: selectedTool,
+            signal_ids: response.result?.signal_ids || [],
+            metadata: {
+              flyer_image_source_url: flyerImage?.source_url || null,
+              agent_result: response.result,
             },
-            accessToken
-          );
+          });
         }
       } else {
         setConversations((prev) =>
@@ -407,20 +359,16 @@ export default function ChatPage() {
         );
 
         if (accessToken) {
-          await postJson(
-            `/chat/conversations/${conversationId}/messages`,
-            {
-              id: assistantMessage.id,
-              role: "assistant",
-              content: buildAssistantReply(trimmed, selectedToolLabel),
-              tool: selectedToolLabel,
-              ui_type: "text",
-              intent_detected: selectedTool,
-              signal_ids: [],
-              metadata: {},
-            },
-            accessToken
-          );
+          await apiPost(`/chat/conversations/${conversationId}/messages`, {
+            id: assistantMessage.id,
+            role: "assistant",
+            content: buildAssistantReply(trimmed, selectedToolLabel),
+            tool: selectedToolLabel,
+            ui_type: "text",
+            intent_detected: selectedTool,
+            signal_ids: [],
+            metadata: {},
+          });
         }
       }
 

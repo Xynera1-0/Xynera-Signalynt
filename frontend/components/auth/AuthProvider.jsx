@@ -61,15 +61,31 @@ export function AuthProvider({ children }) {
   const [refreshToken, setRefreshToken] = useState(null);
   const [ready, setReady] = useState(false);
 
+  function clearAuthState() {
+    window.localStorage.removeItem(STORAGE_KEY);
+    setUser(null);
+    setAccessToken(null);
+    setRefreshToken(null);
+  }
+
+  function persistAuthState(nextState) {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+    setUser(nextState.user || null);
+    setAccessToken(nextState.accessToken || null);
+    setRefreshToken(nextState.refreshToken || null);
+  }
+
   useEffect(() => {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (raw) {
       try {
         const data = JSON.parse(raw);
         if (data?.accessToken) {
-          setUser(data.user || null);
-          setAccessToken(data.accessToken || null);
-          setRefreshToken(data.refreshToken || null);
+          persistAuthState({
+            user: data.user || null,
+            accessToken: data.accessToken || null,
+            refreshToken: data.refreshToken || null,
+          });
         }
       } catch {
         window.localStorage.removeItem(STORAGE_KEY);
@@ -85,6 +101,69 @@ export function AuthProvider({ children }) {
       refreshToken,
       ready,
       isAuthenticated: Boolean(user),
+      refreshAccessToken: async () => {
+        if (!refreshToken) {
+          throw new Error("Missing refresh token");
+        }
+
+        try {
+          const payload = await postJson("/auth/refresh", { refresh_token: refreshToken });
+          const nextState = {
+            user,
+            accessToken: payload.access_token,
+            refreshToken: payload.refresh_token || refreshToken,
+          };
+          persistAuthState(nextState);
+          return nextState.accessToken;
+        } catch (err) {
+          clearAuthState();
+          throw new Error(normalizeApiError(err, "Session expired. Please sign in again."));
+        }
+      },
+      apiGet: async (path) => {
+        if (!accessToken) {
+          throw new Error("Missing access token");
+        }
+
+        try {
+          return await getJson(path, accessToken);
+        } catch (err) {
+          const message = normalizeApiError(err, "Request failed");
+          if (message.toLowerCase().includes("invalid or expired token") && refreshToken) {
+            const payload = await postJson("/auth/refresh", { refresh_token: refreshToken });
+            const nextState = {
+              user,
+              accessToken: payload.access_token,
+              refreshToken: payload.refresh_token || refreshToken,
+            };
+            persistAuthState(nextState);
+            return await getJson(path, nextState.accessToken);
+          }
+          throw new Error(message);
+        }
+      },
+      apiPost: async (path, body) => {
+        if (!accessToken) {
+          throw new Error("Missing access token");
+        }
+
+        try {
+          return await postJson(path, body, accessToken);
+        } catch (err) {
+          const message = normalizeApiError(err, "Request failed");
+          if (message.toLowerCase().includes("invalid or expired token") && refreshToken) {
+            const payload = await postJson("/auth/refresh", { refresh_token: refreshToken });
+            const nextState = {
+              user,
+              accessToken: payload.access_token,
+              refreshToken: payload.refresh_token || refreshToken,
+            };
+            persistAuthState(nextState);
+            return await postJson(path, body, nextState.accessToken);
+          }
+          throw new Error(message);
+        }
+      },
       login: async (email, password) => {
         if (!email || !password) {
           throw new Error("Email and password are required.");
@@ -97,11 +176,7 @@ export function AuthProvider({ children }) {
             accessToken: payload.access_token,
             refreshToken: payload.refresh_token,
           };
-
-          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-          setUser(state.user);
-          setAccessToken(state.accessToken);
-          setRefreshToken(state.refreshToken);
+          persistAuthState(state);
         } catch (err) {
           throw new Error(normalizeApiError(err, "Login failed."));
         }
@@ -118,11 +193,7 @@ export function AuthProvider({ children }) {
             accessToken: payload.access_token,
             refreshToken: payload.refresh_token,
           };
-
-          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-          setUser(state.user);
-          setAccessToken(state.accessToken);
-          setRefreshToken(state.refreshToken);
+          persistAuthState(state);
         } catch (err) {
           throw new Error(normalizeApiError(err, "Google login failed."));
         }
@@ -139,11 +210,7 @@ export function AuthProvider({ children }) {
             accessToken: payload.access_token,
             refreshToken: payload.refresh_token,
           };
-
-          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-          setUser(state.user);
-          setAccessToken(state.accessToken);
-          setRefreshToken(state.refreshToken);
+          persistAuthState(state);
         } catch (err) {
           throw new Error(normalizeApiError(err, "Registration failed."));
         }
@@ -159,15 +226,10 @@ export function AuthProvider({ children }) {
           accessToken,
           refreshToken,
         };
-
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-        setUser(payload.user);
+        persistAuthState(state);
       },
       logout: () => {
-        window.localStorage.removeItem(STORAGE_KEY);
-        setUser(null);
-        setAccessToken(null);
-        setRefreshToken(null);
+        clearAuthState();
       },
     };
   }, [accessToken, refreshToken, user, ready]);
