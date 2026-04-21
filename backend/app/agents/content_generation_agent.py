@@ -1,36 +1,37 @@
 import json
-from typing import Dict, Any
+import re
+from typing import Any, Dict
 
 
 class ContentAgentPool:
     def __init__(self, llm):
         self.llm = llm
 
-    # ---------------- CONTENT AGENT ----------------
     def content_agent(self, input_data: Dict[str, Any]) -> Dict:
+        brief = input_data.get("prompt") or input_data.get("brief") or input_data.get("goal") or ""
         prompt = f"""
 You are an elite marketing strategist and conversion copywriter.
 
-Your goal is to create HIGH-CONVERTING, NON-GENERIC marketing content.
+Create output that is tightly tied to the primary brief. Do not invent a different offer, audience, or angle.
 
 INPUT:
 {json.dumps(input_data, indent=2)}
 
+PRIMARY BRIEF:
+{brief}
+
 RULES:
-- Do NOT use generic phrases like "join now" without context
-- Be specific to the audience
-- Use emotional + logical appeal
-- Keep it concise but impactful
-- Make it feel real and modern
+- Stay tightly focused on the primary brief.
+- Keep the response concise and directly relevant.
+- Do not use generic filler, long paragraphs, or unrelated marketing advice.
+- Avoid repeating the same idea in different words.
+- If the brief is short, infer only the minimum context needed.
 
 TASK:
-1. Create 3 DISTINCT headlines (different angles: emotional, benefit-driven, curiosity)
-2. Write a short persuasive body (max 60 words)
-3. Create a strong, specific CTA
-4. Generate 3 variations:
-   - emotional (exciting, energetic)
-   - professional (clear, value-focused)
-   - minimal (short + punchy)
+1. Create 3 distinct headlines tied to the brief.
+2. Write a body of 35 to 50 words max.
+3. Create a specific CTA.
+4. Generate 3 short variations: emotional, professional, minimal.
 5. Format content for platform: {input_data.get("platform", "flyer")}
 
 OUTPUT STRICTLY IN JSON:
@@ -48,7 +49,6 @@ OUTPUT STRICTLY IN JSON:
 """
         return self._call_llm(prompt)
 
-    # ---------------- DESIGN AGENT ----------------
     def design_agent(self, content: Dict) -> Dict:
         prompt = f"""
 You are a world-class graphic designer.
@@ -59,9 +59,9 @@ CONTENT:
 {json.dumps(content, indent=2)}
 
 RULES:
-- Be specific (no vague terms like "nice colors")
-- Ensure modern, trendy design
-- Match visuals with target audience psychology
+- Be specific.
+- Ensure modern, trendy design.
+- Match visuals with target audience psychology.
 
 TASK:
 Provide:
@@ -80,7 +80,6 @@ OUTPUT STRICTLY IN JSON:
 """
         return self._call_llm(prompt)
 
-    # ---------------- CRITIQUE AGENT ----------------
     def critique_agent(self, content: Dict) -> Dict:
         prompt = f"""
 You are a senior growth marketer and conversion analyst.
@@ -89,14 +88,11 @@ CONTENT:
 {json.dumps(content, indent=2)}
 
 TASK:
-1. Evaluate each variation (emotional, professional, minimal)
-2. Score each (1-10) based on:
-   - clarity
-   - engagement
-   - conversion potential
-3. Select the BEST version
-4. Explain WHY it is best (short)
-5. Improve it further into a FINAL HIGH-CONVERTING version
+1. Evaluate each variation (emotional, professional, minimal).
+2. Score each from 1 to 10 based on clarity, engagement, and conversion potential.
+3. Select the best version.
+4. Explain why it is best in one short sentence.
+5. Improve it further into a final high-converting version.
 
 OUTPUT STRICTLY IN JSON:
 {{
@@ -112,9 +108,8 @@ OUTPUT STRICTLY IN JSON:
 """
         return self._call_llm(prompt)
 
-    # ---------------- MAIN PIPELINE ----------------
     def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        print("🚀 Running Competition-Level Content Agent System...")
+        print("Running content generation agent...")
 
         content = self.content_agent(input_data)
         design = self.design_agent(content)
@@ -123,19 +118,19 @@ OUTPUT STRICTLY IN JSON:
         return {
             "content": content,
             "design": design,
-            "critique": critique
+            "critique": critique,
         }
 
-    # ---------------- LLM CALL ----------------
     def _call_llm(self, prompt: str) -> Dict:
+        text = ""
         try:
             response = self.llm.generate_content(prompt)
-            text = response.text.strip()
-
-            # Try parsing JSON safely
+            text = (response.text or "").strip()
+            text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+            text = re.sub(r"\s*```$", "", text)
             return json.loads(text)
         except Exception:
             return {
                 "error": "Parsing failed",
-                "raw_output": text if 'text' in locals() else "No response"
+                "raw_output": text if text else "No response",
             }
