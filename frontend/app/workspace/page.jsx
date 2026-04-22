@@ -94,12 +94,17 @@ export default function WorkspacePage() {
       <main className="mx-auto w-full max-w-7xl px-4 py-6 md:py-10">
         <header className="glass-panel mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl px-5 py-4">
           <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-brand-300">Signal to Action</p>
+            <p className="text-xs uppercase tracking-[0.2em] text-brand-300">
+              Signal to Action
+            </p>
             <h1 className="text-main mt-1 flex items-center gap-2 text-xl font-bold md:text-2xl">
               <BrainCircuit className="h-6 w-6 text-brand-300" />
               Growth Campaign Workspace
             </h1>
-            <p className="text-soft mt-1 text-sm">Welcome {user?.name || "operator"}. Your intelligence loop is live.</p>
+            <p className="text-soft mt-1 text-sm">
+              Welcome {user?.name || "operator"}. Your intelligence loop is
+              live.
+            </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <ThemeToggle />
@@ -110,10 +115,14 @@ export default function WorkspacePage() {
               disabled={loading}
               title="Refresh signals"
             >
-              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+              <RefreshCw
+                className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
+              />
               {loading ? "Loading…" : "Refresh"}
             </button>
-            <Link href="/chat" className="btn-ghost">Open chat</Link>
+            <Link href="/chat" className="btn-ghost">
+              Open chat
+            </Link>
             <button type="button" className="btn-ghost" onClick={logout}>
               <LogOut className="h-4 w-4" />
               Sign out
@@ -131,7 +140,9 @@ export default function WorkspacePage() {
           <div className="space-y-4">
             {messages.map((message) => (
               <article key={message.id}>
-                <p className="text-muted mb-2 text-xs uppercase tracking-[0.15em]">{message.title}</p>
+                <p className="text-muted mb-2 text-xs uppercase tracking-[0.15em]">
+                  {message.title}
+                </p>
                 <EphemeralRenderer message={message} onAction={handleAction} />
               </article>
             ))}
@@ -142,16 +153,22 @@ export default function WorkspacePage() {
               <Sparkle className="h-4 w-4" />
               Action feed
             </h2>
-            <p className="text-muted mt-1 text-xs">Click decisions appear here to drive the next agent cycle.</p>
+            <p className="text-muted mt-1 text-xs">
+              Click decisions appear here to drive the next agent cycle.
+            </p>
 
             <div className="mt-4 space-y-2">
               {actionFeed.length === 0 && (
                 <div className="text-muted rounded-xl border border-dashed border-slate-500/40 bg-black/5 p-3 text-xs">
-                  No actions yet. Pick a variant or channel to continue the loop.
+                  No actions yet. Pick a variant or channel to continue the
+                  loop.
                 </div>
               )}
               {actionFeed.map((item) => (
-                <div key={item.id} className="rounded-xl border border-slate-500/40 bg-black/10 p-3">
+                <div
+                  key={item.id}
+                  className="rounded-xl border border-slate-500/40 bg-black/10 p-3"
+                >
                   <p className="text-main text-sm">{item.text}</p>
                   <p className="text-muted mt-1 text-xs">{item.ts}</p>
                 </div>
