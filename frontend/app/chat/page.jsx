@@ -189,6 +189,10 @@ export default function ChatPage() {
         ? formatChatTitle(trimmed)
         : activeConversation.title;
 
+    const selectedToolLabel =
+      TOOL_OPTIONS.find((t) => t.id === selectedTool)?.label || selectedTool;
+    const shouldRunAgent = !!accessToken;
+
     // Optimistic user bubble
     const optimisticUserMsg = {
       id: crypto.randomUUID(),
@@ -232,65 +236,127 @@ export default function ChatPage() {
     );
 
     try {
-      if (!accessToken) {
-        // Not logged in — local reply only
+      if (accessToken) {
+        await apiPost("/chat/conversations", {
+          id: conversationId,
+          title: conversationTitle,
+          tool: selectedTool,
+        });
+
+        await apiPost(`/chat/conversations/${conversationId}/messages`, {
+          id: optimisticUserMsg.id,
+          role: "user",
+          content: optimisticUserMsg.content,
+          tool: selectedTool,
+          ui_type: optimisticUserMsg.uiType,
+          intent_detected: optimisticUserMsg.intentDetected,
+          signal_ids: optimisticUserMsg.signalIds,
+          metadata: optimisticUserMsg.metadata,
+        });
+      }
+
+      if (shouldRunAgent) {
+        const payload = {
+          prompt: trimmed,
+          audience: user?.name || user?.email || "operator",
+          goal: "Generate marketing content from the user prompt",
+          tone: "Modern and persuasive",
+          platform: selectedToolLabel,
+          insights:
+            "Use the prompt as the primary creative brief and keep the output concise.",
+          extra_context: {
+            prompt: trimmed,
+            user: user?.email || user?.name || "anonymous",
+          },
+        };
+
+        const response = await apiPost(
+          "/agents/content-generation/run",
+          payload,
+        );
+        const rendered = formatAgentResponse(response.result);
+        const flyerImage = response.flyer_image;
+        const flyerImageDataUrl = flyerImage?.base64
+          ? `data:${flyerImage.mime_type || "image/jpeg"};base64,${flyerImage.base64}`
+          : null;
+
         setConversations((prev) =>
           prev
-            .map((c) => {
-              if (c.id !== conversationId) return c;
-              const msgs = [...c.messages];
-              msgs[msgs.length - 1] = {
-                ...msgs[msgs.length - 1],
-                content: buildAssistantReply(trimmed, selectedTool),
-                uiType: "text",
+            .map((conversation) => {
+              if (conversation.id !== conversationId) {
+                return conversation;
+              }
+
+              const nextMessages = [...conversation.messages];
+              nextMessages[nextMessages.length - 1] = {
+                ...nextMessages[nextMessages.length - 1],
+                content: rendered,
+                result: response.result,
+                flyerImageUrl: flyerImageDataUrl,
+                flyerImageSourceUrl: flyerImage?.source_url || null,
+                uiType: flyerImageDataUrl ? "flyer" : "content_bundle",
+                intentDetected: selectedTool,
+                signalIds: response.result?.signal_ids || [],
+                metadata: {
+                  flyer_image_source_url: flyerImage?.source_url || null,
+                  agent_result: response.result,
+                },
               };
-              return { ...c, updatedAt: Date.now(), messages: msgs };
+
+              return {
+                ...conversation,
+                title: conversationTitle,
+                tool: selectedTool,
+                updatedAt: Date.now(),
+                messages: nextMessages,
+              };
             })
             .sort((a, b) => b.updatedAt - a.updatedAt),
         );
-        setInput("");
-        return;
+
+        if (accessToken) {
+          await apiPost(`/chat/conversations/${conversationId}/messages`, {
+            id: optimisticAssistantMsg.id,
+            role: "assistant",
+            content: rendered,
+            tool: selectedToolLabel,
+            ui_type: flyerImageDataUrl ? "flyer" : "content_bundle",
+            intent_detected: selectedTool,
+            signal_ids: response.result?.signal_ids || [],
+            metadata: {
+              flyer_image_source_url: flyerImage?.source_url || null,
+              agent_result: response.result,
+            },
+          });
+        }
+      } else {
+        setConversations((prev) =>
+          prev
+            .map((conversation) => {
+              if (conversation.id !== conversationId) {
+                return conversation;
+              }
+
+              const nextMessages = [...conversation.messages];
+              nextMessages[nextMessages.length - 1] = {
+                ...nextMessages[nextMessages.length - 1],
+                content: buildAssistantReply(trimmed, selectedToolLabel),
+                uiType: "text",
+                intentDetected: selectedTool,
+                signalIds: [],
+                metadata: {},
+              };
+              return {
+                ...conversation,
+                title: conversationTitle,
+                tool: selectedTool,
+                updatedAt: Date.now(),
+                messages: nextMessages,
+              };
+            })
+            .sort((a, b) => b.updatedAt - a.updatedAt),
+        );
       }
-
-      // Single call: runs full supervisor graph + persists both messages
-      const response = await apiPost(
-        `/chat/conversations/${conversationId}/send`,
-        {
-          message: trimmed,
-          tool: selectedTool,
-          title: conversationTitle,
-          workspace_id: user?.workspace_id || "",
-        },
-      );
-
-      const assistantMsg = response.assistant_message || {};
-
-      setConversations((prev) =>
-        prev
-          .map((c) => {
-            if (c.id !== conversationId) return c;
-            const msgs = [...c.messages];
-            // Replace the optimistic assistant bubble with real response
-            msgs[msgs.length - 1] = {
-              id: assistantMsg.id || optimisticAssistantMsg.id,
-              role: "assistant",
-              content: assistantMsg.content || "Done.",
-              uiType: assistantMsg.ui_type || "text",
-              ui_payload: assistantMsg.ui_payload || {},
-              intentDetected: assistantMsg.intent_detected || selectedTool,
-              signalIds: assistantMsg.signal_ids || [],
-              metadata: assistantMsg.ui_payload || {},
-            };
-            return {
-              ...c,
-              title: conversationTitle,
-              tool: selectedTool,
-              updatedAt: Date.now(),
-              messages: msgs,
-            };
-          })
-          .sort((a, b) => b.updatedAt - a.updatedAt),
-      );
 
       setInput("");
     } catch (err) {
