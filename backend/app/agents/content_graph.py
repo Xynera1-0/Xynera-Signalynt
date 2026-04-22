@@ -17,7 +17,7 @@ from typing import TypedDict, List
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import HumanMessage
 
-from app.agents.base import get_llm
+from app.agents.base import get_llm, coerce_llm_content
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,7 @@ Return JSON:
 }}
 """
     response = await llm.ainvoke([HumanMessage(content=prompt)])
-    content = response.content if hasattr(response, "content") else str(response)
+    content = coerce_llm_content(response.content) if hasattr(response, "content") else str(response)
     strategy = _parse_json(content)
 
     logger.info("content_strategist | completed angle=%r variants_planned=%d",

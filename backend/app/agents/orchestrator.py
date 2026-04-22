@@ -4,17 +4,26 @@ Dispatches only the agents relevant to the query dimensions.
 """
 from __future__ import annotations
 import json
+import logging
 
 from langgraph.types import Send
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.agents.base import get_llm
+from app.agents.base import get_llm, coerce_llm_content
 from app.agents.prompts import ORCHESTRATOR_PROMPT
 from app.agents.schemas import OrchestratorPlan, AgentDispatch
 from app.agents.state import ResearchState
 
+logger = logging.getLogger(__name__)
 
-async def orchestrator_node(state: ResearchState) -> list[Send]:
+
+async def orchestrator_node(state: ResearchState) -> dict:
+    """Runs the LLM planner and stores the plan in state.
+    Fan-out to parallel agents is handled by dispatch_to_agents() which is
+    wired as a conditional edge — LangGraph requires Send() to come from an
+    edge function, not from a node return value.
+    """
+    logger.info("orchestrator | START query=%r", state["user_query"][:80])
     llm = get_llm(temperature=0.2)
 
     prompt = ORCHESTRATOR_PROMPT.format(
@@ -40,25 +49,53 @@ Valid agent_name values: trend_scout, spy_scout, anthropologist, contextual_scou
         SystemMessage(content=prompt + schema_hint),
         HumanMessage(content=f"Plan the research for: {state['user_query']}"),
     ])
-    llm_text = response.content if hasattr(response, "content") else str(response)
+    llm_text = coerce_llm_content(response.content) if hasattr(response, "content") else str(response)
 
     plan = _parse_plan(llm_text)
+    agent_names = [d.agent_name for d in plan.dispatches]
+    logger.info("orchestrator | PLAN intents=%s agents=%s temporal=%s reasoning=%r",
+                plan.intent_labels, agent_names, plan.temporal_needed, plan.reasoning[:120])
+    return {"orchestrator_plan": plan.model_dump()}
 
-    # Store plan in state for audit
-    state_update = {"orchestrator_plan": plan.model_dump()}
+
+def dispatch_to_agents(state: ResearchState) -> list[Send]:
+    """Conditional edge function — reads the stored orchestrator plan and fans
+    out to the relevant agent nodes in parallel using Send().
+    """
+    plan_dict = state.get("orchestrator_plan") or {}
+    dispatches = plan_dict.get("dispatches") or []
 
     sends = []
-    for dispatch in plan.dispatches:
-        node_name = _agent_to_node(dispatch.agent_name)
-        sends.append(Send(node_name, {
+    for dispatch in dispatches:
+        node_name = _agent_to_node(dispatch.get("agent_name", ""))
+        if node_name:
+            logger.info("orchestrator | DISPATCH agent=%s focus=%r priority=%s",
+                        node_name, dispatch.get("focus", "")[:80], dispatch.get("priority"))
+            sends.append(Send(node_name, {
+                **dict(state),
+                "focus": dispatch.get("focus", ""),
+                "priority": dispatch.get("priority", "primary"),
+            }))
+
+    if plan_dict.get("temporal_needed"):
+        logger.info("orchestrator | DISPATCH agent=temporal_agent_node")
+        sends.append(Send("temporal_agent_node", {
             **dict(state),
-            "focus": dispatch.focus,
-            "priority": dispatch.priority,
+            "focus": state.get("user_query", ""),
         }))
 
-    if plan.temporal_needed:
-        sends.append(Send("temporal_agent_node", {**dict(state), "focus": state["user_query"]}))
+    # Fallback: full sweep if orchestrator produced nothing
+    if not sends:
+        logger.warning("orchestrator | no dispatches from plan — falling back to full sweep")
+        query = state.get("user_query", "")
+        for agent, focus in [
+            ("trend_scout", "General market and PESTEL analysis"),
+            ("spy_scout", "Competitive landscape overview"),
+            ("anthropologist", "Audience sentiment and pain points"),
+        ]:
+            sends.append(Send(agent, {**dict(state), "focus": focus, "priority": "primary"}))
 
+    logger.info("orchestrator | total sends=%d", len(sends))
     return sends
 
 
@@ -72,8 +109,9 @@ def _agent_to_node(agent_name: str) -> str:
     return mapping.get(agent_name, agent_name)
 
 
-def _parse_plan(text: str) -> OrchestratorPlan:
+def _parse_plan(text) -> OrchestratorPlan:
     import re
+    text = coerce_llm_content(text)
     match = re.search(r"\{[\s\S]*\}", text)
     if not match:
         # Fallback: full sweep

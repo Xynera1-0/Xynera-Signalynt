@@ -8,13 +8,24 @@ Tool resolution order:
 """
 from __future__ import annotations
 import json
+import logging
+import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
+
+from dotenv import load_dotenv
+
+# Force-load .env into os.environ before anything else reads it.
+# override=True ensures this wins even if pydantic-settings read .env first.
+load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=True)
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
+
 from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 
 from app.core.config import get_settings
 from app.agents.schemas import AgentFinding, Finding, Evidence
@@ -23,20 +34,105 @@ from app.tools.base import ToolResult
 from app.tools.mcp_client import get_mcp_tools
 from app.tools.registry import get_tools_for
 
-settings = get_settings()
+# Do NOT cache settings at module level — get_llm() calls get_settings() fresh
+# so the lru_cache is busted after load_dotenv runs above.
+get_settings.cache_clear()
+
+_RATE_LIMIT_MARKERS = (
+    "429",
+    "quota",
+    "rate limit",
+    "too many requests",
+    "resource exhausted",
+    "resource_exhausted",
+)
+
+
+def _is_rate_limit(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(m in msg for m in _RATE_LIMIT_MARKERS)
+
+
+class _GrokFallback:
+    """Wraps a primary LangChain chat model with a Grok fallback on rate-limit errors."""
+
+    def __init__(self, primary, fallback):
+        self._primary = primary
+        self._fallback = fallback
+
+    def invoke(self, messages, **kwargs):
+        try:
+            return self._primary.invoke(messages, **kwargs)
+        except Exception as exc:
+            if _is_rate_limit(exc):
+                logging.warning("LLM rate-limit hit, switching to Grok. Error: %s", exc)
+                return self._fallback.invoke(messages, **kwargs)
+            raise
+
+    async def ainvoke(self, messages, **kwargs):
+        try:
+            return await self._primary.ainvoke(messages, **kwargs)
+        except Exception as exc:
+            if _is_rate_limit(exc):
+                logging.warning("LLM rate-limit hit, switching to Grok. Error: %s", exc)
+                return await self._fallback.ainvoke(messages, **kwargs)
+            raise
+
+    def bind_tools(self, tools, **kwargs):
+        return _GrokFallback(
+            self._primary.bind_tools(tools, **kwargs),
+            self._fallback.bind_tools(tools, **kwargs),
+        )
+
+    def __getattr__(self, name):
+        return getattr(self._primary, name)
+
+
+def coerce_llm_content(content) -> str:
+    """Normalise LLM response.content to a plain string.
+
+    Gemini (langchain_google_genai) can return a list of content-block dicts
+    instead of a bare string.  This extracts text from every block so the rest
+    of the codebase always gets a str.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                parts.append(block.get("text") or block.get("content") or str(block))
+            else:
+                parts.append(str(block))
+        return " ".join(parts)
+    return str(content) if content is not None else ""
 
 
 def get_llm(temperature: float | None = None):
-    t = temperature if temperature is not None else settings.agent_temperature
-    if settings.anthropic_api_key:
-        return ChatAnthropic(
+    # Read keys from os.environ first (populated by main.py's load_dotenv)
+    # Fall back to settings in case os.environ somehow wasn't populated
+    s = get_settings()
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY") or s.anthropic_api_key
+    groq_key = os.environ.get("GROQ_API_KEY") or s.groq_api_key
+    t = temperature if temperature is not None else s.agent_temperature
+    
+    if anthropic_key:
+        return ChatAnthropic(  # type: ignore[call-arg]
             model="claude-sonnet-4-5",
-            api_key=settings.anthropic_api_key,
+            api_key=anthropic_key,
             temperature=t,
         )
+    if groq_key:
+        logging.info("get_llm: using Groq (groq/compound)")
+        return ChatGroq(
+            model="groq/compound",
+            api_key=groq_key,
+            temperature=t,
+        )
+    logging.warning("get_llm: falling back to Gemini — GROQ_API_KEY not in os.environ or settings")
     return ChatGoogleGenerativeAI(
-        model="gemini-2.0-flash",
-        google_api_key=settings.google_api_key,
+        model="gemini-3-flash-preview",
+        google_api_key=s.google_api_key,
         temperature=t,
     )
 
@@ -136,7 +232,11 @@ def agent_finding_from_llm_json(
             raw_sources_count=data.get("raw_sources_count", len(findings)),
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
-    except Exception:
+    except Exception as exc:
+        logging.getLogger(f"app.agents.{agent_name}").warning(
+            "%s | parse_fail exc=%s raw_output=%r",
+            agent_name, exc, llm_output[:400],
+        )
         return AgentFinding(
             agent_name=agent_name,
             focus_question=focus_question,
@@ -146,4 +246,25 @@ def agent_finding_from_llm_json(
             gaps=["Failed to parse agent output"],
             deviation_notes=[f"Raw output: {llm_output[:200]}"],
             timestamp=datetime.now(timezone.utc).isoformat(),
+        )
+
+
+def log_tool_results(agent_name: str, tool_results: list) -> None:
+    """Structured log of every tool call result for an agent run."""
+    _log = logging.getLogger(f"app.agents.{agent_name}")
+    succeeded = [r for r in tool_results if not r.error and r.content]
+    failed = [r for r in tool_results if r.error]
+    _log.info(
+        "%s | TOOLS called=%d succeeded=%d failed=%d",
+        agent_name, len(tool_results), len(succeeded), len(failed),
+    )
+    for r in succeeded:
+        _log.info(
+            "%s | TOOL_OK  tool=%-25s source=%s chars=%d",
+            agent_name, r.tool_name, (r.source_name or r.source_url or "")[:60], len(r.content),
+        )
+    for r in failed:
+        _log.warning(
+            "%s | TOOL_ERR tool=%-25s error=%s",
+            agent_name, r.tool_name, str(r.error)[:120],
         )

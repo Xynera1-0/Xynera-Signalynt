@@ -4,18 +4,22 @@ from datetime import datetime, timezone
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.agents.base import get_llm, agent_finding_from_llm_json
+import logging
+
+from app.agents.base import get_llm, agent_finding_from_llm_json, coerce_llm_content, log_tool_results
 from app.agents.prompts import ANTHROPOLOGIST_PROMPT
 from app.agents.state import ResearchState
 from app.tools.registry import get_tools_for
 
 AGENT_NAME = "anthropologist"
+logger = logging.getLogger(__name__)
 
 
 async def anthropologist_node(state: ResearchState, db=None) -> dict:
     focus = state.get("focus", state["user_query"])
     tools = get_tools_for(AGENT_NAME)
     llm = get_llm()
+    logger.info("anthropologist | START focus=%r tools_available=%s", focus[:80], list(tools.keys()))
 
     tool_results = []
 
@@ -54,11 +58,14 @@ async def anthropologist_node(state: ResearchState, db=None) -> dict:
         f"FOCUS: {focus}\n\nDATA:\n{tool_context[:8000]}"
     )
     response = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=synthesis_prompt)])
-    llm_text = response.content if hasattr(response, "content") else str(response)
+    llm_text = coerce_llm_content(response.content) if hasattr(response, "content") else str(response)
+    logger.info("anthropologist | llm_raw_prefix=%r", llm_text[:300])
 
     from app.agents.trend_scout import _extract_json
+    log_tool_results(AGENT_NAME, tool_results)
     finding = agent_finding_from_llm_json(AGENT_NAME, focus, _extract_json(llm_text))
     finding.raw_sources_count = len(tool_results)
     finding.timestamp = datetime.now(timezone.utc).isoformat()
-
+    logger.info("anthropologist | DONE findings=%d confidence=%.2f gaps=%s",
+                len(finding.findings), finding.confidence_overall, finding.gaps)
     return {"agent_findings": [finding]}

@@ -9,7 +9,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from app.agents.state import ResearchState
-from app.agents.orchestrator import orchestrator_node
+from app.agents.orchestrator import orchestrator_node, dispatch_to_agents
 from app.agents.synthesis import synthesis_node
 from app.agents.summarizer import summarizer_node
 from app.agents.trend_scout import trend_scout_node
@@ -50,12 +50,14 @@ def build_research_graph(checkpointer=None):
     builder.add_node("synthesis", synthesis_node)
     builder.add_node("summarizer", summarizer_node)
 
-    # Entry: KB Reader → orchestrator fans out via Send()
+    # Entry: KB Reader → orchestrator (plan + store) → conditional fan-out via Send()
     builder.set_entry_point("kb_reader")
     builder.add_edge("kb_reader", "orchestrator")
+    # dispatch_to_agents is a conditional edge function that returns list[Send]
+    # LangGraph requires Send() to originate from an edge function, not a node.
+    builder.add_conditional_edges("orchestrator", dispatch_to_agents)
 
     # Parallel agent nodes all converge to synthesis
-    # (The Send() API routes to these nodes; they write into agent_findings via reducer)
     for agent_node in ("trend_scout", "spy_scout", "anthropologist", "contextual_scout", "temporal_agent_node"):
         builder.add_edge(agent_node, "synthesis")
 

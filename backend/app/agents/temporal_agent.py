@@ -9,7 +9,7 @@ from langgraph.graph import StateGraph, END
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
-from app.agents.base import get_llm
+from app.agents.base import get_llm, coerce_llm_content
 from app.agents.prompts import TEMPORAL_AGENT_AMBIENT_PROMPT, TEMPORAL_AGENT_PUBLISH_PROMPT
 from app.tools.registry import get_tools_for
 
@@ -72,7 +72,7 @@ async def temporal_agent_node(state: TemporalState) -> dict:
         full_prompt += f"\n\nPLATFORM TIMING:\n{platform_timing}"
 
     response = await llm.ainvoke([HumanMessage(content=full_prompt)])
-    llm_text = response.content if hasattr(response, "content") else str(response)
+    llm_text = coerce_llm_content(response.content) if hasattr(response, "content") else str(response)
 
     return {"result": {"mode": state.mode, "analysis": llm_text, "timestamp": datetime.now(timezone.utc).isoformat()}}
 

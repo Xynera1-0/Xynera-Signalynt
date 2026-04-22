@@ -1,4 +1,6 @@
 import asyncio
+import logging
+import os
 import uuid
 from typing import Any
 
@@ -11,6 +13,7 @@ from psycopg2.extras import Json
 from ..db import get_db_cursor
 from ..security import decode_token
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -276,6 +279,7 @@ def create_message(conversation_id: str, payload: MessageCreateRequest, token_us
 # ─────────────────────────────────────────────────────────────────────────────
 
 ROUTE_TO_UI_TYPE = {
+    "chat":             "text",
     "research_only":    "research_brief",
     "content_only":     "variant_comparison",
     "research_content": "variant_comparison",
@@ -291,11 +295,37 @@ def _format_graph_result(result: dict) -> tuple[str, str, dict, list]:
     """
     route = result.get("route", "full_campaign")
     ui_type = ROUTE_TO_UI_TYPE.get(route, "text")
-
+    # ── chat (generic / conversational) ───────────────────────────────────────
+    if route == "chat":
+        reply = result.get("chat_reply") or "I'm here to help with your campaigns."
+        import re as _re
+        reply = _re.sub(r"<think>[\s\S]*?</think>", "", reply, flags=_re.IGNORECASE).strip()
+        return (reply, "text", {}, [])
     # ── research_only ────────────────────────────────────────────────────────
     if route == "research_only":
         research = result.get("research_result", {})
-        report = research.get("user_report") or str(research.get("synthesis_result", ""))
+
+        # user_report may be a Pydantic UserReport model or already a dict
+        raw_report = research.get("user_report")
+        if hasattr(raw_report, "model_dump"):
+            report_dict = raw_report.model_dump()
+        elif isinstance(raw_report, dict):
+            report_dict = raw_report
+        else:
+            report_dict = {}
+
+        summary = report_dict.get("summary") or str(raw_report or "Research complete.")
+        key_insights = report_dict.get("key_insights") or []
+        gaps = report_dict.get("gaps") or []
+        confidence = report_dict.get("confidence") or report_dict.get("overall_confidence") or 0.0
+        sources = []
+        for s in (report_dict.get("sources") or []):
+            if isinstance(s, dict):
+                sources.append(s)
+            elif hasattr(s, "model_dump"):
+                sources.append(s.model_dump())
+
+        # Build signal bars from agent findings
         signals = []
         for finding in (research.get("agent_findings") or [])[:6]:
             if isinstance(finding, dict):
@@ -304,10 +334,18 @@ def _format_graph_result(result: dict) -> tuple[str, str, dict, list]:
                     "value": round(finding.get("confidence_score", 0) * 100),
                     "trend": f"+{round(finding.get('confidence_score', 0) * 10)}%",
                 })
+
         return (
-            str(report)[:800] or "Research complete.",
+            summary,
             ui_type,
-            {"territory": "Research summary", "signals": signals, "full_report": str(report)},
+            {
+                "summary": summary,
+                "key_insights": key_insights,
+                "gaps": gaps,
+                "confidence": confidence,
+                "sources": sources,
+                "signals": signals,
+            },
             [],
         )
 
@@ -439,17 +477,61 @@ async def send_chat_message(
     # Run supervisor graph (async — may take 10–60 s depending on route)
     from app.agents.supervisor_graph import supervisor_graph
 
+    # Log which LLM provider + key will be used for this invocation
+    _anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    _groq_key = os.environ.get("GROQ_API_KEY", "")
+    _google_key = os.environ.get("GOOGLE_API_KEY", "")
+    if _anthropic_key:
+        _masked = f"sk-ant-...{_anthropic_key[-6:]}"
+        logger.info("graph | LLM provider=Anthropic key=%s", _masked)
+    elif _groq_key:
+        _masked = f"gsk_...{_groq_key[-6:]}"
+        logger.info("graph | LLM provider=Groq key=%s", _masked)
+    elif _google_key:
+        _masked = f"AIza...{_google_key[-6:]}"
+        logger.info("graph | LLM provider=Gemini key=%s", _masked)
+    else:
+        logger.warning("graph | LLM provider=NONE — no API keys configured")
+
+    # Fetch recent conversation history so agents have context from prior turns
+    def _fetch_history(conv_id: str, limit: int = 12) -> list[dict]:
+        try:
+            with get_db_cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT role, content FROM public.messages
+                    WHERE conversation_id = %s::uuid
+                    ORDER BY created_at DESC
+                    LIMIT %s;
+                    """,
+                    (conv_id, limit),
+                )
+                rows = cursor.fetchall()
+            # Rows are newest-first; reverse to chronological order, exclude current user message
+            return [{"role": r["role"], "content": (r["content"] or "")[:600]} for r in reversed(rows)]
+        except Exception:
+            return []
+
+    conversation_history = await asyncio.to_thread(_fetch_history, conversation_id)
+
     try:
         graph_result = await supervisor_graph.ainvoke({
             "user_query": payload.message,
             "workspace_id": payload.workspace_id,
             "campaign_id": str(uuid.uuid4()),
             "thread_id": conversation_id,
+            "tool_hint": payload.tool or "",
+            "conversation_history": conversation_history,
         })
         assistant_content, ui_type, ui_payload, signal_ids = _format_graph_result(graph_result)
         intent = graph_result.get("route", payload.tool)
     except Exception as exc:
-        assistant_content = f"Agent error: {exc}"
+        logger.exception("Agent graph failed for query=%r", payload.message[:100])
+        err_str = str(exc).lower()
+        if any(m in err_str for m in ("429", "quota", "rate limit", "resource_exhausted", "resource exhausted", "too many requests")):
+            assistant_content = "The AI service is currently busy. Please try again in a moment."
+        else:
+            assistant_content = "Something went wrong while processing your request. Please try again."
         ui_type = "text"
         ui_payload = {}
         signal_ids = []

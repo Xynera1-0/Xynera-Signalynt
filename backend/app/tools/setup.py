@@ -17,13 +17,13 @@ from app.tools.implementations.newsapi import newsapi_headlines
 
 # Social & Community
 from app.tools.implementations.reddit import reddit_search
-from app.tools.implementations.hn_algolia import hn_search
+from app.tools.implementations.hn_algolia import hn_search, hn_search_recent
 from app.tools.implementations.youtube import youtube_search, youtube_comments
 
 # Advertising Intelligence
 from app.tools.implementations.meta_ads import meta_ad_search
 from app.tools.implementations.linkedin_ads import linkedin_ad_search
-from app.tools.implementations.semrush import semrush_domain_overview, semrush_keyword_overview
+from app.tools.implementations.moz import moz_domain_metrics, moz_bulk_domain_metrics
 
 # Market Intelligence
 from app.tools.implementations.patents import patent_search
@@ -75,7 +75,11 @@ def setup_tool_registry() -> None:
 
     register("hn_search", hn_search,
              ["anthropologist", "contextual_scout", "temporal_poller"],
-             "Hacker News full-text search via Algolia. Tech practitioner signals.")
+             "Hacker News full-text search via Algolia. Sorted by relevance → points → comments.")
+
+    register("hn_search_recent", hn_search_recent,
+             ["trend_scout", "temporal_poller"],
+             "Hacker News search sorted by date, most recent first. Use for trending/emerging topics.")
 
     register("youtube_search", youtube_search,
              ["anthropologist"],
@@ -94,13 +98,13 @@ def setup_tool_registry() -> None:
              ["spy_scout"],
              "LinkedIn Ad Library. B2B competitor ad creative and targeting signals.")
 
-    register("semrush_domain_overview", semrush_domain_overview,
+    register("moz_domain_metrics", moz_domain_metrics,
              ["spy_scout"],
-             "SEMRush domain overview. Organic/paid traffic and keyword counts for a competitor.")
+             "Moz Link Explorer: Domain Authority, Page Authority, backlink counts, spam score for a competitor domain.")
 
-    register("semrush_keyword_overview", semrush_keyword_overview,
-             ["spy_scout", "trend_scout"],
-             "SEMRush keyword metrics: volume, CPC, competition, trend.")
+    register("moz_bulk_domain_metrics", moz_bulk_domain_metrics,
+             ["spy_scout"],
+             "Moz bulk domain metrics for up to 50 competitor domains in a single API call.")
 
     # ── Market Intelligence ───────────────────────────────────────────────────
     register("patent_search", patent_search,

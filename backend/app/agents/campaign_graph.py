@@ -20,7 +20,7 @@ from typing import TypedDict, Optional, List
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import HumanMessage
 
-from app.agents.base import get_llm
+from app.agents.base import get_llm, coerce_llm_content
 from app.db.kb_writer import (
     write_campaign_to_kb,
     write_growth_signal_to_kb,
@@ -361,7 +361,7 @@ Return JSON:
 }}
 """
     response = await llm.ainvoke([HumanMessage(content=prompt)])
-    content = response.content if hasattr(response, "content") else str(response)
+    content = coerce_llm_content(response.content) if hasattr(response, "content") else str(response)
     logger.debug("campaign_setup | llm_raw campaign=%s len=%d", campaign_id, len(content))
 
     config = _parse_json(content)
@@ -573,7 +573,7 @@ Return JSON:
 }}
 """
     response = await llm.ainvoke([HumanMessage(content=prompt)])
-    return _parse_json(response.content if hasattr(response, "content") else str(response))
+    return _parse_json(coerce_llm_content(response.content) if hasattr(response, "content") else str(response))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -615,7 +615,7 @@ Return JSON array:
 ]
 """
     response = await llm.ainvoke([HumanMessage(content=prompt)])
-    signals = _parse_json_array(response.content if hasattr(response, "content") else str(response))
+    signals = _parse_json_array(coerce_llm_content(response.content) if hasattr(response, "content") else str(response))
 
     for s in signals:
         s["id"] = str(uuid.uuid4())

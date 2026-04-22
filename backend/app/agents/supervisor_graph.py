@@ -14,9 +14,9 @@ import uuid
 from typing import TypedDict, Optional
 
 from langgraph.graph import StateGraph, END
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from app.agents.base import get_llm
+from app.agents.base import get_llm, coerce_llm_content
 from app.db.kb_reader import read_relevant_kb_context
 
 logger = logging.getLogger(__name__)
@@ -31,8 +31,15 @@ class SupervisorState(TypedDict, total=False):
     user_query: str
     workspace_id: str
     campaign_id: str
+    # ── Optional hint from the UI tool selector (may be empty/None) ───
+    # Values: "research" | "generate_content" | "post_to_channel" | "full_workflow" | ""
+    # The planner uses this as a bias, not a strict override.
+    tool_hint: str
     # ── Set to conversation_id so LangGraph checkpoints per conversation
     thread_id: str
+    # ── Last N messages from the conversation, newest last ─────────────
+    # Each entry: {"role": "user"|"assistant", "content": str}
+    conversation_history: list
     # ── KB context injected by Planner ──────────────────────────────
     kb_context: dict
     # ── Available content from Postgres (populated by planner) ──────
@@ -41,6 +48,7 @@ class SupervisorState(TypedDict, total=False):
     plan: dict
     route: str
     # route values:
+    #   chat             — generic / conversational message, direct LLM reply
     #   research_only    — insights only, no content
     #   content_only     — user provides brief, skip research
     #   research_content — research + create content, don't post
@@ -51,6 +59,8 @@ class SupervisorState(TypedDict, total=False):
     research_result: dict
     content_result: dict
     campaign_result: dict
+    # ── For the chat route: direct LLM reply text ─────────────────
+    chat_reply: str
     # ── Status ────────────────────────────────────────────────
     status: str
 
@@ -122,6 +132,26 @@ async def planner_node(state: SupervisorState) -> dict:
     workspace_id = state.get("workspace_id", "")
     logger.info("planner | workspace=%s query=%r", workspace_id, user_query[:80])
 
+    # ── Fast-path 1: short/conversational messages never trigger campaign work ──
+    _CHAT_TRIGGERS = {
+        "hi", "hey", "hello", "thanks", "thank you", "ok", "okay", "sure",
+        "great", "cool", "bye", "goodbye", "good morning", "good afternoon",
+        "good evening", "how are you", "what can you do", "what do you do",
+        "help", "who are you", "what are you",
+    }
+    _query_lower = user_query.strip().lower().rstrip("!?.,")
+    if len(user_query.strip()) < 40 and _query_lower in _CHAT_TRIGGERS:
+        logger.info("planner | fast-path chat route for short conversational message")
+        return {
+            "kb_context": [],
+            "available_campaigns": [],
+            "plan": {"route": "chat"},
+            "route": "chat",
+            "action": "create",
+            "chat_reply": "",
+            "status": "planned",
+        }
+
     # 1. Parallel: read KB + fetch available campaigns
     import asyncio
     kb_context, available_campaigns = await asyncio.gather(
@@ -137,11 +167,34 @@ async def planner_node(state: SupervisorState) -> dict:
     # 2. LLM classifies intent and plans the campaign
     llm = get_llm(temperature=0.1)
 
+    tool_hint = state.get("tool_hint") or ""
+    tool_hint_section = ""
+    # Only pass tool_hint to LLM when user explicitly selected a non-default tool
+    if tool_hint and tool_hint not in ("full_workflow", ""):
+        tool_hint_map = {
+            "research": "research_only",
+            "generate_content": "content_only",
+            "post_to_channel": "post_existing",
+        }
+        mapped = tool_hint_map.get(tool_hint, "")
+        if mapped:
+            tool_hint_section = f"\nUI tool hint from user: '{tool_hint}' → prefer route '{mapped}' unless the message clearly indicates otherwise.\n"
+
+    # Format conversation history for the planner so it understands prior context
+    history = state.get("conversation_history") or []
+    if history:
+        history_lines = "\n".join(
+            f"  [{m['role'].upper()}]: {m['content'][:300]}" for m in history[-10:]
+        )
+        history_section = f"\n─── Recent conversation history (newest last) ───\n{history_lines}\n"
+    else:
+        history_section = ""
+
     prompt = f"""
 You are the campaign planner for a growth-driven marketing platform.
 
 User message: {user_query}
-
+{tool_hint_section}{history_section}
 ─── Available campaigns already in the system ───
 {json.dumps(available_campaigns[:6], indent=2, default=str)[:2000]}
 
@@ -151,6 +204,10 @@ User message: {user_query}
 Classify the user's INTENT and build a plan.
 
 Intent options:
+  chat             — GENERIC or conversational message unrelated to campaigns
+                     (greetings, questions about the platform, small talk, "what can you do?",
+                      "hi", "hello", "thanks", general questions etc.).
+                     Use this when the message does NOT request campaign work.
   research_only    — user wants insights/research only, no content or posting
   content_only     — user provides a brief and wants content created, skip research
   research_content — user wants research + content created but NOT posted yet
@@ -168,7 +225,8 @@ For content creation routes:
 
 Return JSON only:
 {{
-  "route": "full_campaign",
+  "route": "chat",
+  "chat_response": "friendly reply if route is chat, else null",
   "objective": "engagement",
   "hypothesis": "...",
   "test_design": "...",
@@ -182,10 +240,11 @@ Return JSON only:
 }}
 """
     response = await llm.ainvoke([HumanMessage(content=prompt)])
-    raw = response.content if hasattr(response, "content") else str(response)
+    raw = coerce_llm_content(response.content) if hasattr(response, "content") else str(response)
 
     plan = _parse_json(raw)
-    route = plan.get("route", "full_campaign")
+    # Default to 'chat' on parse failure so a quota error never triggers a full campaign run
+    route = plan.get("route") or "chat"
     action = "publish_existing" if route == "post_existing" else "create"
 
     logger.info("planner | completed route=%s action=%s", route, action)
@@ -195,6 +254,7 @@ Return JSON only:
         "plan": plan,
         "route": route,
         "action": action,
+        "chat_reply": plan.get("chat_response") or "",
         "status": "planned",
     }
 
@@ -366,9 +426,44 @@ async def post_existing_node(state: SupervisorState) -> dict:
 # Routing logic
 # ─────────────────────────────────────────────────────────────────────────────
 
+async def chat_node(state: SupervisorState) -> dict:
+    """
+    Lightweight node for generic / conversational messages.
+    Always calls the LLM so responses feel natural and varied.
+    """
+    reply = state.get("chat_reply") or ""
+    if not reply:
+        llm = get_llm(temperature=0.7)
+        system_msg = SystemMessage(content=(
+            "You are Xynera, an AI growth and marketing assistant. "
+            "You help users plan campaigns, research markets, and create content. "
+            "Be concise, friendly, and helpful. Do not use markdown unless asked."
+        ))
+        # Reconstruct prior turns as LangChain messages for context
+        history = state.get("conversation_history") or []
+        prior_messages = []
+        for m in history[-8:]:
+            role = m.get("role", "")
+            content = m.get("content", "")
+            if role == "user":
+                prior_messages.append(HumanMessage(content=content))
+            elif role == "assistant":
+                prior_messages.append(AIMessage(content=content))
+        prior_messages.append(HumanMessage(content=state.get("user_query", "Hello")))
+        response = await llm.ainvoke([system_msg] + prior_messages)
+        reply = coerce_llm_content(response.content) if hasattr(response, "content") else str(response)
+    # Strip <think> blocks (reasoning models)
+    import re as _re
+    reply = _re.sub(r"<think>[\s\S]*?</think>", "", reply, flags=_re.IGNORECASE).strip()
+    logger.info("chat_node | reply_len=%d", len(reply))
+    return {"chat_reply": reply, "status": "completed"}
+
+
 def route_after_plan(state: SupervisorState) -> str:
     """First routing decision — right after the planner runs."""
     route = state.get("route", "full_campaign")
+    if route == "chat":
+        return "chat"
     if route == "post_existing":
         return "post_existing"
     return "research_team"
@@ -396,18 +491,20 @@ def build_supervisor_graph():
     builder = StateGraph(SupervisorState)
 
     builder.add_node("planner", planner_node)
+    builder.add_node("chat", chat_node)
     builder.add_node("post_existing", post_existing_node)
     builder.add_node("research_team", run_research_team)
     builder.add_node("content_team", run_content_team)
     builder.add_node("campaign_team", run_campaign_team)
 
     builder.set_entry_point("planner")
-    # After planning: either post existing content or run research
+    # After planning: chat shortcut, post existing content, or run research
     builder.add_conditional_edges(
         "planner",
         route_after_plan,
-        {"post_existing": "post_existing", "research_team": "research_team"},
+        {"chat": "chat", "post_existing": "post_existing", "research_team": "research_team"},
     )
+    builder.add_edge("chat", END)
     builder.add_edge("post_existing", END)
     builder.add_conditional_edges(
         "research_team", route_after_research, {"content_team": "content_team", END: END}
@@ -423,8 +520,9 @@ def build_supervisor_graph():
 supervisor_graph = build_supervisor_graph()
 
 
-def _parse_json(text: str) -> dict:
+def _parse_json(text) -> dict:
     import re
+    text = coerce_llm_content(text)
     match = re.search(r"\{[\s\S]*\}", text)
     if match:
         try:

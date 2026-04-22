@@ -27,6 +27,7 @@ def _is_rate_limit_or_quota_error(exc: Exception) -> bool:
         "rate limit",
         "too many requests",
         "resource exhausted",
+        "resource_exhausted",
     )
     return any(token in message for token in indicators)
 
@@ -95,10 +96,10 @@ class FallbackGenerativeModel:
             raise
 
 
-@lru_cache(maxsize=1)
+@lru_cache(maxsize=None)
 def get_content_agent_pool() -> ContentAgentPool:
     google_api_key = os.getenv("GOOGLE_API_KEY")
-    grok_api_key = os.getenv("GROK_API_KEY")
+    grok_api_key = os.getenv("GROQ_API_KEY")
 
     gemini_model = None
     if google_api_key:
@@ -110,14 +111,17 @@ def get_content_agent_pool() -> ContentAgentPool:
 
     grok_model = None
     if grok_api_key:
-        grok_model_name = os.getenv("GROK_MODEL", "grok-2-latest")
-        grok_api_base = os.getenv("GROK_API_URL", "https://api.x.ai/v1")
+        # qwen/qwen3-32b: reasoning model, used as fallback
+        grok_model_name = os.getenv("GROQ_MODEL", "groq/compound")
+        grok_api_base = os.getenv("GROQ_API_URL", "https://api.groq.com/openai/v1")
         grok_model = GrokGenerativeModel(
             api_key=grok_api_key,
             model=grok_model_name,
             api_base=grok_api_base,
         )
 
+    # Gemini primary for content generation (1500 req/day free tier, no TPD cap)
+    # Groq fallback when Gemini hits quota or rate limits
     if gemini_model and grok_model:
         model = FallbackGenerativeModel(gemini_model, grok_model)
     elif gemini_model:
@@ -126,7 +130,7 @@ def get_content_agent_pool() -> ContentAgentPool:
         model = grok_model
     else:
         raise ContentAgentConfigError(
-            "No LLM provider configured. Set GOOGLE_API_KEY or GROK_API_KEY."
+            "No LLM provider configured. Set GOOGLE_API_KEY or GROQ_API_KEY."
         )
 
     return ContentAgentPool(model)
@@ -135,31 +139,29 @@ def get_content_agent_pool() -> ContentAgentPool:
 def run_content_generation(input_data: dict) -> dict:
     pool = get_content_agent_pool()
     result = pool.run(input_data)
-    image = generate_flyer_image(input_data, result)
-    if image:
-        result["flyer_image"] = image
+    # Flyer image is only meaningful for visual content types
+    if result.get("content_type", "flyer") == "flyer":
+        image = generate_flyer_image(input_data, result)
+        if image:
+            result["flyer_image"] = image
     return result
 
 
 def _build_flyer_image_prompt(input_data: dict, result: dict) -> str:
-    content = result.get("content") or {}
-    critique = result.get("critique") or {}
-    headline = (content.get("headlines") or [""])[0]
-    body = content.get("body") or ""
-    cta = content.get("cta") or ""
-    final_output = critique.get("final_output") or ""
+    brand_hint = input_data.get("prompt") or input_data.get("goal") or "product"
+    design = result.get("design") or {}
+    visual_hint = (design.get("visual_elements") or "professional product photography")[:250]
+    color_hint = (design.get("color_palette") or "modern neutral tones")[:200]
 
-    brand_hint = input_data.get("prompt") or input_data.get("goal") or "business flyer"
-    platform = input_data.get("platform") or "flyer"
-
+    # Instruct the model to generate ONLY a background image — text is overlaid in the UI.
     return (
-        "Create a high-quality marketing flyer, portrait orientation, print-ready style. "
-        f"Primary brief: {brand_hint}. Platform: {platform}. "
-        f"Use this headline: {headline}. "
-        f"Use this body copy: {body}. "
-        f"Use this call to action: {cta}. "
-        f"Design refinement: {final_output}. "
-        "Modern typography, strong visual hierarchy, balanced whitespace, no watermark, no logo corruption, professional composition."
+        "BACKGROUND ONLY. STRICTLY NO TEXT. NO WORDS. NO LETTERS. NO NUMBERS. NO TYPOGRAPHY. "
+        "NO CAPTIONS. NO WATERMARKS. Pure visual background image for a marketing flyer. "
+        f"Product theme: {brand_hint}. "
+        f"Visual elements: {visual_hint}. "
+        f"Colour scheme: {color_hint}. "
+        "High quality photography or illustration, portrait orientation, cinematic lighting, "
+        "clean composition with breathing room at top and bottom for text overlay, print-ready."
     )
 
 

@@ -1,5 +1,7 @@
 from pydantic import BaseModel
-from typing import Any
+from typing import Any, Literal
+
+RecencyLiteral = Literal["24h", "7d", "30d", "90d", "older"]
 
 
 class ToolResult(BaseModel):
@@ -9,7 +11,7 @@ class ToolResult(BaseModel):
     content: str                          # Extracted text / structured data as string
     metadata: dict[str, Any] = {}         # timestamps, query used, page title, etc.
     error: str | None = None
-    recency: str = "30d"                  # 24h | 7d | 30d | 90d | older
+    recency: RecencyLiteral = "30d"       # 24h | 7d | 30d | 90d | older
     quote: str | None = None             # Verbatim excerpt if available
 
     def as_markdown_link(self) -> str:

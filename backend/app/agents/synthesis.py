@@ -4,16 +4,28 @@ Phase 1: relevance audit. Phase 2: gap check. Phase 3: merge & decide routing.
 """
 from __future__ import annotations
 import json
+import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.agents.base import get_llm
+from app.agents.base import get_llm, coerce_llm_content
 from app.agents.prompts import SYNTHESIS_PROMPT
-from app.agents.schemas import SynthesisResult, Finding, Evidence
+from app.agents.schemas import SynthesisResult, Finding, Evidence, ContentBrief
 from app.agents.state import ResearchState
+
+logger = logging.getLogger(__name__)
 
 
 async def synthesis_node(state: ResearchState) -> dict:
+    findings_in = state.get("agent_findings", [])
+    logger.info("synthesis | START agent_findings=%d", len(findings_in))
+    for f in findings_in:
+        agent = getattr(f, "agent_name", "?")
+        conf = getattr(f, "confidence_overall", 0)
+        n_findings = len(getattr(f, "findings", []))
+        gaps = getattr(f, "gaps", [])
+        logger.info("synthesis | AGENT %-20s confidence=%.2f findings=%d gaps=%s",
+                    agent, conf, n_findings, gaps)
     llm = get_llm(temperature=0.1)
 
     findings_json = json.dumps(
@@ -43,11 +55,29 @@ Return JSON:
         SystemMessage(content=prompt + schema_hint),
         HumanMessage(content=f"Synthesise findings for: {state['user_query']}"),
     ])
-    llm_text = response.content if hasattr(response, "content") else str(response)
+    llm_text = coerce_llm_content(response.content) if hasattr(response, "content") else str(response)
     synthesis = _parse_synthesis(llm_text)
 
     routing = "to_content_agent" if synthesis.ready_for_content else "to_user"
-    return {"synthesis_result": synthesis, "routing": routing}
+    logger.info("synthesis | DONE query_answered=%s coverage=%.2f key_findings=%d routing=%s gaps=%s",
+                synthesis.query_answered, synthesis.coverage_score,
+                len(synthesis.key_findings), routing, synthesis.gaps)
+
+    result: dict = {"synthesis_result": synthesis, "routing": routing}
+
+    # When routing to content agent, populate ContentBrief so the content graph
+    # has all research findings — without this the content strategist runs blind.
+    if routing == "to_content_agent":
+        content_brief = ContentBrief(
+            synthesis=synthesis,
+            workspace_context=state.get("workspace_context", {}),
+            temporal_context=None,
+        )
+        result["content_brief"] = content_brief
+        logger.info("synthesis | ContentBrief written findings=%d coverage=%.2f",
+                    len(synthesis.key_findings), synthesis.coverage_score)
+
+    return result
 
 
 def _parse_synthesis(text: str) -> SynthesisResult:

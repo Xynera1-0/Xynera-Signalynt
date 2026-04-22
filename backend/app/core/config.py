@@ -1,6 +1,9 @@
+from pathlib import Path
 from pydantic_settings import BaseSettings
 from pydantic import Field
 from functools import lru_cache
+
+_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
 class Settings(BaseSettings):
@@ -29,6 +32,7 @@ class Settings(BaseSettings):
     # LLM Providers
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
     google_api_key: str = Field(default="", alias="GOOGLE_API_KEY")
+    groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
 
     # Tool APIs — Search
     tavily_api_key: str = Field(default="", alias="TAVILY_API_KEY")
@@ -49,6 +53,10 @@ class Settings(BaseSettings):
     meta_access_token: str = Field(default="", alias="META_ACCESS_TOKEN")
     linkedin_access_token: str = Field(default="", alias="LINKEDIN_ACCESS_TOKEN")
     semrush_api_key: str = Field(default="", alias="SEMRUSH_API_KEY")
+
+    # Tool APIs — SEO / Link Intelligence
+    moz_access_id: str = Field(default="", alias="MOZ_ACCESS_ID")
+    moz_secret_key: str = Field(default="", alias="MOZ_SECRET_KEY")
 
     # Tool APIs — Market Intelligence
     crunchbase_api_key: str = Field(default="", alias="CRUNCHBASE_API_KEY")
@@ -91,9 +99,13 @@ class Settings(BaseSettings):
     # Temporal Poller
     temporal_poller_interval_seconds: int = Field(default=900, alias="TEMPORAL_POLLER_INTERVAL_SECONDS")
 
-    model_config = {"env_file": ".env", "populate_by_name": True}
+    model_config = {"env_file": str(_ENV_FILE), "populate_by_name": True}
 
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def clear_settings_cache() -> None:
+    get_settings.cache_clear()

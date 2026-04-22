@@ -2,15 +2,20 @@
 
 import {
   ChannelSelector,
+  ContentCard,
+  FlyerCard,
   PublishConfirmation,
   SignalMap,
   VariantComparisonGrid,
 } from "./cards";
 
-export default function EphemeralRenderer({ message, onAction }) {
+export default function EphemeralRenderer({ message, onAction, onExpand }) {
   const data = message.ui_payload || {};
 
   switch (message.ui_type) {
+    case "flyer":
+      return <FlyerCard data={data} onExpand={onExpand} />;
+
     case "signal_map":
     case "research_brief":
       return <SignalMap data={data} />;
@@ -18,6 +23,10 @@ export default function EphemeralRenderer({ message, onAction }) {
     case "variant_comparison":
     case "campaign_result":
     case "content_bundle":
+      // If the payload has a typed result from the agent, use the rich ContentCard
+      if (data.result?.content_type && data.result.content_type !== "flyer") {
+        return <ContentCard data={data} />;
+      }
       return (
         <VariantComparisonGrid
           data={data}
