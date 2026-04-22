@@ -1,6 +1,7 @@
 .env
 backend/.env
-
+.env.example
+signalynt-prod-2026-c40a7bd2d1f1.json
 __pycache__/
 *.py[cod]
 *.egg-info/
