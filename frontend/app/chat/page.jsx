@@ -280,9 +280,9 @@ export default function ChatPage() {
         const response = await apiPost("/agents/content-generation/run", payload);
         const rendered = formatAgentResponse(response.result);
         const flyerImage = response.flyer_image;
-        const flyerImageDataUrl = flyerImage?.base64
+        const flyerImageUrl = flyerImage?.cloudinary_secure_url || flyerImage?.source_url || (flyerImage?.base64
           ? `data:${flyerImage.mime_type || "image/jpeg"};base64,${flyerImage.base64}`
-          : null;
+          : null);
 
         setConversations((prev) =>
           prev.map((conversation) => {
@@ -295,13 +295,13 @@ export default function ChatPage() {
               ...nextMessages[nextMessages.length - 1],
               content: rendered,
               result: response.result,
-              flyerImageUrl: flyerImageDataUrl,
-              flyerImageSourceUrl: flyerImage?.source_url || null,
-              uiType: flyerImageDataUrl ? "flyer" : "content_bundle",
+              flyerImageUrl,
+              flyerImageSourceUrl: flyerImage?.cloudinary_secure_url || flyerImage?.source_url || null,
+              uiType: flyerImageUrl ? "flyer" : "content_bundle",
               intentDetected: selectedTool,
               signalIds: response.result?.signal_ids || [],
               metadata: {
-                flyer_image_source_url: flyerImage?.source_url || null,
+                flyer_image_source_url: flyerImage?.cloudinary_secure_url || flyerImage?.source_url || null,
                 agent_result: response.result,
               },
             };
@@ -322,11 +322,11 @@ export default function ChatPage() {
             role: "assistant",
             content: rendered,
             tool: selectedToolLabel,
-            ui_type: flyerImageDataUrl ? "flyer" : "content_bundle",
+            ui_type: flyerImageUrl ? "flyer" : "content_bundle",
             intent_detected: selectedTool,
             signal_ids: response.result?.signal_ids || [],
             metadata: {
-              flyer_image_source_url: flyerImage?.source_url || null,
+              flyer_image_source_url: flyerImage?.cloudinary_secure_url || flyerImage?.source_url || null,
               agent_result: response.result,
             },
           });

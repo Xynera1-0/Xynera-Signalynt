@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
 import os
+import time
+import uuid
 from base64 import b64encode
 from functools import lru_cache
 from types import SimpleNamespace
@@ -173,9 +176,72 @@ def generate_flyer_image(input_data: dict, result: dict) -> dict | None:
 
     content_type = response.headers.get("Content-Type", "image/jpeg")
     image_base64 = b64encode(response.content).decode("ascii")
+    cloudinary_image = _upload_image_to_cloudinary(
+        content=response.content,
+        content_type=content_type,
+    )
 
-    return {
+    payload = {
         "mime_type": content_type,
         "base64": image_base64,
         "source_url": image_url,
+    }
+
+    if cloudinary_image:
+        payload.update(cloudinary_image)
+
+    return payload
+
+
+def _cloudinary_config() -> tuple[str | None, str | None, str | None, str | None]:
+    cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME")
+    api_key = os.getenv("CLOUDINARY_API_KEY")
+    api_secret = os.getenv("CLOUDINARY_API_SECRET")
+    upload_folder = os.getenv("CLOUDINARY_UPLOAD_FOLDER", "xynera/generated-flyers")
+
+    if not cloud_name:
+        cloudinary_url = os.getenv("CLOUDINARY_URL")
+        if cloudinary_url and "@" in cloudinary_url:
+            cloud_name = cloudinary_url.rsplit("@", 1)[-1]
+
+    return cloud_name, api_key, api_secret, upload_folder
+
+
+def _upload_image_to_cloudinary(content: bytes, content_type: str) -> dict | None:
+    cloud_name, api_key, api_secret, upload_folder = _cloudinary_config()
+    if not cloud_name or not api_key or not api_secret:
+        return None
+
+    timestamp = str(int(time.time()))
+    public_id = f"flyer-{uuid.uuid4().hex}"
+    signature_payload = {
+        "folder": upload_folder,
+        "public_id": public_id,
+        "timestamp": timestamp,
+    }
+    signature_base = "&".join(f"{key}={value}" for key, value in sorted(signature_payload.items()))
+    signature = hashlib.sha1(f"{signature_base}{api_secret}".encode("utf-8")).hexdigest()
+
+    upload_url = f"https://api.cloudinary.com/v1_1/{cloud_name}/image/upload"
+    file_extension = "jpg" if "jpeg" in content_type.lower() else "png"
+    files = {"file": (f"{public_id}.{file_extension}", content, content_type)}
+    data = {
+        **signature_payload,
+        "api_key": api_key,
+        "signature": signature,
+    }
+
+    try:
+        response = requests.post(upload_url, data=data, files=files, timeout=45)
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        return None
+
+    return {
+        "cloudinary_public_id": payload.get("public_id"),
+        "cloudinary_secure_url": payload.get("secure_url"),
+        "cloudinary_url": payload.get("url"),
+        "cloudinary_version": payload.get("version"),
+        "source_url": payload.get("secure_url") or payload.get("url") or payload.get("public_id"),
     }
