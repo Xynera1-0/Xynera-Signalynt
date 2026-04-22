@@ -1,19 +1,82 @@
 "use client";
 
 import Link from "next/link";
-import { BrainCircuit, LogOut, Sparkle } from "lucide-react";
-import { useMemo, useState } from "react";
+import { BrainCircuit, LogOut, RefreshCw, Sparkle } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import AuthGuard from "../../components/auth/AuthGuard";
 import { useAuth } from "../../components/auth/AuthProvider";
 import EphemeralRenderer from "../../components/ephemeral/EphemeralRenderer";
 import ThemeToggle from "../../components/theme/ThemeToggle";
 import { initialMessages } from "../../lib/mockMessages";
 
-export default function WorkspacePage() {
-  const { user, logout } = useAuth();
-  const [actionFeed, setActionFeed] = useState([]);
+function buildMessagesFromSignals(signals, raw) {
+  const messages = [];
 
-  const messages = useMemo(() => initialMessages, []);
+  if (signals && signals.length > 0) {
+    messages.push({
+      id: "ws-signal-map",
+      role: "agent",
+      title: "Live growth signal snapshot",
+      uiType: "signal_map",
+      ui_payload: {
+        territory: "All campaigns",
+        signals,
+      },
+    });
+  }
+
+  // Build variant comparison from raw rows that have magnitude data
+  const variants = (raw || [])
+    .filter((r) => r.affected_variable && r.magnitude != null)
+    .slice(0, 6)
+    .map((r) => ({
+      name: r.affected_variable,
+      ctr: Number((parseFloat(r.magnitude) * 100).toFixed(1)),
+      cvr: Number((parseFloat(r.confidence || 0) * 100).toFixed(1)),
+      sentiment: r.signal_type?.replace(/_/g, " ") || "signal",
+      description: r.description,
+      campaign_name: r.campaign_name,
+    }));
+
+  if (variants.length > 0) {
+    messages.push({
+      id: "ws-variant-comparison",
+      role: "agent",
+      title: "Top performing variables",
+      uiType: "variant_comparison",
+      ui_payload: { variants },
+    });
+  }
+
+  return messages.length > 0 ? messages : initialMessages;
+}
+
+export default function WorkspacePage() {
+  const { user, logout, apiGet } = useAuth();
+  const [actionFeed, setActionFeed] = useState([]);
+  const [messages, setMessages] = useState(initialMessages);
+  const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
+
+  const loadSignals = useCallback(async () => {
+    if (!apiGet) return;
+    setLoading(true);
+    setFetchError(null);
+    try {
+      const data = await apiGet("/api/v1/campaign/signals/recent?limit=20");
+      const built = buildMessagesFromSignals(data?.signals, data?.raw);
+      setMessages(built);
+    } catch (err) {
+      setFetchError(err.message || "Could not load signals");
+      setMessages(initialMessages); // fall back to mock
+    } finally {
+      setLoading(false);
+    }
+  }, [apiGet]);
+
+  useEffect(() => {
+    loadSignals();
+  }, [loadSignals]);
 
   function handleAction(actionText) {
     setActionFeed((prev) => [
@@ -40,6 +103,16 @@ export default function WorkspacePage() {
           </div>
           <div className="flex flex-wrap gap-2">
             <ThemeToggle />
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={loadSignals}
+              disabled={loading}
+              title="Refresh signals"
+            >
+              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+              {loading ? "Loading…" : "Refresh"}
+            </button>
             <Link href="/chat" className="btn-ghost">Open chat</Link>
             <button type="button" className="btn-ghost" onClick={logout}>
               <LogOut className="h-4 w-4" />
@@ -47,6 +120,12 @@ export default function WorkspacePage() {
             </button>
           </div>
         </header>
+
+        {fetchError && (
+          <p className="mb-4 rounded-xl border border-rose-400/25 bg-rose-400/10 px-4 py-2 text-sm text-rose-200">
+            Could not fetch live signals — showing demo data. ({fetchError})
+          </p>
+        )}
 
         <section className="grid gap-6 lg:grid-cols-[1.6fr_1fr]">
           <div className="space-y-4">

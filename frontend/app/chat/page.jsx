@@ -1,10 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, Bot, Plus, SendHorizonal, UserRound, Wrench } from "lucide-react";
+import {
+  ArrowLeft,
+  Bot,
+  Plus,
+  SendHorizonal,
+  UserRound,
+  Wrench,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import AuthGuard from "../../components/auth/AuthGuard";
 import { useAuth } from "../../components/auth/AuthProvider";
+import EphemeralRenderer from "../../components/ephemeral/EphemeralRenderer";
 import ThemeToggle from "../../components/theme/ThemeToggle";
 
 const TOOL_OPTIONS = [
@@ -17,7 +25,8 @@ const TOOL_OPTIONS = [
 const INITIAL_ASSISTANT_MESSAGE = {
   id: "assistant-welcome",
   role: "assistant",
-  content: "Hello. I am your campaign assistant. Ask for positioning, channel mix, or next actions.",
+  content:
+    "Hello. I am your campaign assistant. Ask for positioning, channel mix, or next actions.",
   uiType: "text",
   intentDetected: "full_workflow",
   signalIds: [],
@@ -62,14 +71,19 @@ export default function ChatPage() {
   const { user, accessToken, apiGet, apiPost } = useAuth();
   const [input, setInput] = useState("");
   const [conversations, setConversations] = useState([createConversation()]);
-  const [activeConversationId, setActiveConversationId] = useState(conversations[0].id);
+  const [activeConversationId, setActiveConversationId] = useState(
+    conversations[0].id,
+  );
   const [selectedTool, setSelectedTool] = useState("full_workflow");
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState(null);
 
   const activeConversation = useMemo(
-    () => conversations.find((conversation) => conversation.id === activeConversationId) || conversations[0],
-    [activeConversationId, conversations]
+    () =>
+      conversations.find(
+        (conversation) => conversation.id === activeConversationId,
+      ) || conversations[0],
+    [activeConversationId, conversations],
   );
 
   useEffect(() => {
@@ -90,7 +104,9 @@ export default function ChatPage() {
 
         const withMessages = await Promise.all(
           remoteConversations.map(async (conversation) => {
-            const messagesPayload = await apiGet(`/chat/conversations/${conversation.id}/messages`);
+            const messagesPayload = await apiGet(
+              `/chat/conversations/${conversation.id}/messages`,
+            );
             const messages = (messagesPayload.messages || []).map((item) => ({
               id: item.id,
               role: item.role,
@@ -107,14 +123,20 @@ export default function ChatPage() {
               id: conversation.id,
               title: conversation.title,
               tool: conversation.tool || "full_workflow",
-              updatedAt: conversation.updated_at ? new Date(conversation.updated_at).getTime() : Date.now(),
-              messages: messages.length ? messages : [{ ...INITIAL_ASSISTANT_MESSAGE, id: crypto.randomUUID() }],
+              updatedAt: conversation.updated_at
+                ? new Date(conversation.updated_at).getTime()
+                : Date.now(),
+              messages: messages.length
+                ? messages
+                : [{ ...INITIAL_ASSISTANT_MESSAGE, id: crypto.randomUUID() }],
             };
-          })
+          }),
         );
 
         if (!cancelled) {
-          const ordered = withMessages.sort((a, b) => b.updatedAt - a.updatedAt);
+          const ordered = withMessages.sort(
+            (a, b) => b.updatedAt - a.updatedAt,
+          );
           setConversations(ordered);
           setActiveConversationId(ordered[0].id);
           setSelectedTool(ordered[0].tool || "full_workflow");
@@ -139,7 +161,9 @@ export default function ChatPage() {
   }
 
   function openConversation(conversationId) {
-    const conversation = conversations.find((item) => item.id === conversationId);
+    const conversation = conversations.find(
+      (item) => item.id === conversationId,
+    );
     if (!conversation) {
       return;
     }
@@ -149,75 +173,37 @@ export default function ChatPage() {
   }
 
   function formatAgentResponse(result) {
-    if (!result) {
-      return "No response returned.";
-    }
-
-    if (typeof result === "string") {
-      return result;
-    }
-
-    const content = result.content || {};
-    const critique = result.critique || {};
-
-    if (content.headlines || content.body || content.cta || critique.final_output) {
-      const lines = [];
-
-      if (content.headlines?.length) {
-        lines.push(`Headlines:\n- ${content.headlines.join("\n- ")}`);
-      }
-
-      if (content.body) {
-        lines.push(`Body:\n${content.body}`);
-      }
-
-      if (content.cta) {
-        lines.push(`CTA:\n${content.cta}`);
-      }
-
-      if (critique.final_output) {
-        lines.push(`Final:\n${critique.final_output}`);
-      } else if (content.platform_output) {
-        lines.push(`Platform Output:\n${content.platform_output}`);
-      }
-
-      return lines.join("\n\n");
-    }
-
+    if (!result) return "No response returned.";
+    if (typeof result === "string") return result;
     return JSON.stringify(result, null, 2);
   }
 
   async function sendMessage(e) {
     e.preventDefault();
     const trimmed = input.trim();
-    if (!trimmed || !activeConversation) {
-      return;
-    }
+    if (!trimmed || !activeConversation) return;
 
-    const selectedToolLabel = TOOL_OPTIONS.find((tool) => tool.id === selectedTool)?.label || "Full Workflow";
     const conversationId = activeConversation.id;
-    const shouldRunAgent = selectedTool === "generate_content" || selectedTool === "full_workflow";
-    const conversationTitle = activeConversation.messages.length <= 1 ? formatChatTitle(trimmed) : activeConversation.title;
+    const conversationTitle =
+      activeConversation.messages.length <= 1
+        ? formatChatTitle(trimmed)
+        : activeConversation.title;
 
-    const userMessage = {
+    // Optimistic user bubble
+    const optimisticUserMsg = {
       id: crypto.randomUUID(),
       role: "user",
       content: trimmed,
-      tool: selectedToolLabel,
       uiType: "prompt",
       intentDetected: selectedTool,
       signalIds: [],
-      metadata: {
-        prompt: trimmed,
-        tool: selectedTool,
-      },
+      metadata: {},
     };
-
-    const assistantMessage = {
+    const optimisticAssistantMsg = {
       id: crypto.randomUUID(),
       role: "assistant",
-      content: shouldRunAgent ? "Running content generation agent..." : buildAssistantReply(trimmed, selectedToolLabel),
-      uiType: shouldRunAgent ? "content_bundle" : "text",
+      content: "Running agent…",
+      uiType: "text",
       intentDetected: selectedTool,
       signalIds: [],
       metadata: {},
@@ -227,173 +213,102 @@ export default function ChatPage() {
     setSendError(null);
     setConversations((prev) =>
       prev
-        .map((conversation) => {
-          if (conversation.id !== conversationId) {
-            return conversation;
-          }
-
-          return {
-            ...conversation,
-            title: conversationTitle,
-            tool: selectedTool,
-            updatedAt: Date.now(),
-            messages: [...conversation.messages, userMessage, assistantMessage],
-          };
-        })
-        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .map((c) =>
+          c.id !== conversationId
+            ? c
+            : {
+                ...c,
+                title: conversationTitle,
+                tool: selectedTool,
+                updatedAt: Date.now(),
+                messages: [
+                  ...c.messages,
+                  optimisticUserMsg,
+                  optimisticAssistantMsg,
+                ],
+              },
+        )
+        .sort((a, b) => b.updatedAt - a.updatedAt),
     );
 
     try {
-      if (accessToken) {
-        await apiPost("/chat/conversations", {
-          id: conversationId,
-          title: conversationTitle,
+      if (!accessToken) {
+        // Not logged in — local reply only
+        setConversations((prev) =>
+          prev
+            .map((c) => {
+              if (c.id !== conversationId) return c;
+              const msgs = [...c.messages];
+              msgs[msgs.length - 1] = {
+                ...msgs[msgs.length - 1],
+                content: buildAssistantReply(trimmed, selectedTool),
+                uiType: "text",
+              };
+              return { ...c, updatedAt: Date.now(), messages: msgs };
+            })
+            .sort((a, b) => b.updatedAt - a.updatedAt),
+        );
+        setInput("");
+        return;
+      }
+
+      // Single call: runs full supervisor graph + persists both messages
+      const response = await apiPost(
+        `/chat/conversations/${conversationId}/send`,
+        {
+          message: trimmed,
           tool: selectedTool,
-        });
+          title: conversationTitle,
+          workspace_id: user?.workspace_id || "",
+        },
+      );
 
-        await apiPost(`/chat/conversations/${conversationId}/messages`, {
-          id: userMessage.id,
-          role: "user",
-          content: userMessage.content,
-          tool: userMessage.tool,
-          ui_type: userMessage.uiType,
-          intent_detected: userMessage.intentDetected,
-          signal_ids: userMessage.signalIds,
-          metadata: userMessage.metadata,
-        });
-      }
+      const assistantMsg = response.assistant_message || {};
 
-      if (shouldRunAgent) {
-        const payload = {
-          prompt: trimmed,
-          audience: user?.name || user?.email || "operator",
-          goal: "Generate marketing content from the user prompt",
-          tone: "Modern and persuasive",
-          platform: selectedToolLabel,
-          insights: "Use the prompt as the primary creative brief and keep the output concise.",
-          extra_context: {
-            prompt: trimmed,
-            user: user?.email || user?.name || "anonymous",
-          },
-        };
-
-        const response = await apiPost("/agents/content-generation/run", payload);
-        const rendered = formatAgentResponse(response.result);
-        const flyerImage = response.flyer_image;
-        const flyerImageDataUrl = flyerImage?.base64
-          ? `data:${flyerImage.mime_type || "image/jpeg"};base64,${flyerImage.base64}`
-          : null;
-
-        setConversations((prev) =>
-          prev.map((conversation) => {
-            if (conversation.id !== conversationId) {
-              return conversation;
-            }
-
-            const nextMessages = [...conversation.messages];
-            nextMessages[nextMessages.length - 1] = {
-              ...nextMessages[nextMessages.length - 1],
-              content: rendered,
-              result: response.result,
-              flyerImageUrl: flyerImageDataUrl,
-              flyerImageSourceUrl: flyerImage?.source_url || null,
-              uiType: flyerImageDataUrl ? "flyer" : "content_bundle",
-              intentDetected: selectedTool,
-              signalIds: response.result?.signal_ids || [],
-              metadata: {
-                flyer_image_source_url: flyerImage?.source_url || null,
-                agent_result: response.result,
-              },
+      setConversations((prev) =>
+        prev
+          .map((c) => {
+            if (c.id !== conversationId) return c;
+            const msgs = [...c.messages];
+            // Replace the optimistic assistant bubble with real response
+            msgs[msgs.length - 1] = {
+              id: assistantMsg.id || optimisticAssistantMsg.id,
+              role: "assistant",
+              content: assistantMsg.content || "Done.",
+              uiType: assistantMsg.ui_type || "text",
+              ui_payload: assistantMsg.ui_payload || {},
+              intentDetected: assistantMsg.intent_detected || selectedTool,
+              signalIds: assistantMsg.signal_ids || [],
+              metadata: assistantMsg.ui_payload || {},
             };
-
             return {
-              ...conversation,
+              ...c,
               title: conversationTitle,
               tool: selectedTool,
               updatedAt: Date.now(),
-              messages: nextMessages,
+              messages: msgs,
             };
-          }).sort((a, b) => b.updatedAt - a.updatedAt)
-        );
-
-        if (accessToken) {
-          await apiPost(`/chat/conversations/${conversationId}/messages`, {
-            id: assistantMessage.id,
-            role: "assistant",
-            content: rendered,
-            tool: selectedToolLabel,
-            ui_type: flyerImageDataUrl ? "flyer" : "content_bundle",
-            intent_detected: selectedTool,
-            signal_ids: response.result?.signal_ids || [],
-            metadata: {
-              flyer_image_source_url: flyerImage?.source_url || null,
-              agent_result: response.result,
-            },
-          });
-        }
-      } else {
-        setConversations((prev) =>
-          prev.map((conversation) => {
-            if (conversation.id !== conversationId) {
-              return conversation;
-            }
-
-            const nextMessages = [...conversation.messages];
-            nextMessages[nextMessages.length - 1] = {
-              ...nextMessages[nextMessages.length - 1],
-              content: buildAssistantReply(trimmed, selectedToolLabel),
-              uiType: "text",
-              intentDetected: selectedTool,
-              signalIds: [],
-              metadata: {},
-            };
-
-            return {
-              ...conversation,
-              title: conversationTitle,
-              tool: selectedTool,
-              updatedAt: Date.now(),
-              messages: nextMessages,
-            };
-          }).sort((a, b) => b.updatedAt - a.updatedAt)
-        );
-
-        if (accessToken) {
-          await apiPost(`/chat/conversations/${conversationId}/messages`, {
-            id: assistantMessage.id,
-            role: "assistant",
-            content: buildAssistantReply(trimmed, selectedToolLabel),
-            tool: selectedToolLabel,
-            ui_type: "text",
-            intent_detected: selectedTool,
-            signal_ids: [],
-            metadata: {},
-          });
-        }
-      }
+          })
+          .sort((a, b) => b.updatedAt - a.updatedAt),
+      );
 
       setInput("");
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Agent request failed.";
-      setSendError(message);
+      const errMsg =
+        err instanceof Error ? err.message : "Agent request failed.";
+      setSendError(errMsg);
       setConversations((prev) =>
-        prev.map((conversation) => {
-          if (conversation.id !== conversationId) {
-            return conversation;
-          }
-
-          const nextMessages = [...conversation.messages];
-          nextMessages[nextMessages.length - 1] = {
-            ...nextMessages[nextMessages.length - 1],
-            content: `Agent request failed: ${message}`,
-          };
-
-          return {
-            ...conversation,
-            updatedAt: Date.now(),
-            messages: nextMessages,
-          };
-        }).sort((a, b) => b.updatedAt - a.updatedAt)
+        prev
+          .map((c) => {
+            if (c.id !== conversationId) return c;
+            const msgs = [...c.messages];
+            msgs[msgs.length - 1] = {
+              ...msgs[msgs.length - 1],
+              content: `Error: ${errMsg}`,
+            };
+            return { ...c, updatedAt: Date.now(), messages: msgs };
+          })
+          .sort((a, b) => b.updatedAt - a.updatedAt),
       );
     } finally {
       setIsSending(false);
@@ -405,9 +320,15 @@ export default function ChatPage() {
       <main className="mx-auto w-full max-w-6xl px-4 py-6 md:py-10">
         <header className="glass-panel mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl px-5 py-4">
           <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-brand-300">Conversation Console</p>
-            <h1 className="text-main mt-1 text-xl font-bold md:text-2xl">Xynera Chat Interface</h1>
-            <p className="text-soft mt-1 text-sm">Signed in as {user?.name || "operator"}</p>
+            <p className="text-xs uppercase tracking-[0.2em] text-brand-300">
+              Conversation Console
+            </p>
+            <h1 className="text-main mt-1 text-xl font-bold md:text-2xl">
+              Xynera Chat Interface
+            </h1>
+            <p className="text-soft mt-1 text-sm">
+              Signed in as {user?.name || "operator"}
+            </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <ThemeToggle />
@@ -420,14 +341,20 @@ export default function ChatPage() {
 
         <section className="grid gap-4 lg:grid-cols-[260px_1fr]">
           <aside className="glass-panel rounded-2xl p-3 md:p-4">
-            <button type="button" onClick={createNewConversation} className="btn-primary mb-3 w-full">
+            <button
+              type="button"
+              onClick={createNewConversation}
+              className="btn-primary mb-3 w-full"
+            >
               <Plus className="h-4 w-4" />
               New chat
             </button>
             <div className="space-y-2">
               {conversations.map((conversation) => {
                 const isActive = conversation.id === activeConversation?.id;
-                const toolLabel = TOOL_OPTIONS.find((tool) => tool.id === conversation.tool)?.label || "Full Workflow";
+                const toolLabel =
+                  TOOL_OPTIONS.find((tool) => tool.id === conversation.tool)
+                    ?.label || "Full Workflow";
                 return (
                   <button
                     key={conversation.id}
@@ -439,8 +366,12 @@ export default function ChatPage() {
                         : "border-slate-500/40 bg-black/10 hover:border-brand-400/40 hover:bg-brand-400/10"
                     }`}
                   >
-                    <p className="text-main truncate text-sm font-semibold">{conversation.title}</p>
-                    <p className="text-muted mt-1 truncate text-xs">{toolLabel}</p>
+                    <p className="text-main truncate text-sm font-semibold">
+                      {conversation.title}
+                    </p>
+                    <p className="text-muted mt-1 truncate text-xs">
+                      {toolLabel}
+                    </p>
                   </button>
                 );
               })}
@@ -451,44 +382,70 @@ export default function ChatPage() {
             <div className="space-y-3 rounded-2xl border border-slate-500/30 bg-black/10 p-3 md:p-4">
               {activeConversation?.messages.map((message) => {
                 const isUser = message.role === "user";
+                // Assistant messages with a rich ui_type get a full-width card,
+                // user messages and plain text get the standard bubble layout
+                const hasRichUI =
+                  !isUser &&
+                  message.uiType &&
+                  message.uiType !== "text" &&
+                  message.uiType !== "prompt";
                 return (
                   <article
                     key={message.id}
-                    className={`flex items-start gap-3 rounded-xl border p-3 ${
-                      isUser ? "ml-auto max-w-[85%] border-brand-300/30 bg-brand-400/10" : "mr-auto max-w-[92%] border-slate-500/30 bg-white/40"
-                    }`}
+                    className={
+                      hasRichUI
+                        ? "mr-auto w-full"
+                        : `flex items-start gap-3 rounded-xl border p-3 ${
+                            isUser
+                              ? "ml-auto max-w-[85%] border-brand-300/30 bg-brand-400/10"
+                              : "mr-auto max-w-[92%] border-slate-500/30 bg-white/40"
+                          }`
+                    }
                   >
-                    <span className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-full bg-slate-900/90 text-brand-200">
-                      {isUser ? <UserRound className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
-                    </span>
+                    {!hasRichUI && (
+                      <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-900/90 text-brand-200">
+                        {isUser ? (
+                          <UserRound className="h-4 w-4" />
+                        ) : (
+                          <Bot className="h-4 w-4" />
+                        )}
+                      </span>
+                    )}
                     <div className="min-w-0 flex-1">
-                      {isUser && message.tool ? <p className="text-muted mb-1 text-[11px] uppercase tracking-[0.14em]">{message.tool}</p> : null}
-                      {typeof message.content === "string" ? (
-                        <p className="text-main whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
-                      ) : (
-                        <pre className="text-main overflow-x-auto whitespace-pre-wrap text-xs leading-relaxed">{JSON.stringify(message.content, null, 2)}</pre>
-                      )}
-                      {message.flyerImageUrl ? (
-                        <div className="mt-3 overflow-hidden rounded-xl border border-slate-500/30 bg-black/5 p-2">
-                          <img
-                            src={message.flyerImageUrl}
-                            alt="Generated flyer"
-                            className="h-auto w-full rounded-lg object-contain"
-                            loading="lazy"
-                          />
-                          {message.flyerImageSourceUrl ? (
-                            <p className="text-muted mt-2 break-all text-[11px]">Image source: {message.flyerImageSourceUrl}</p>
-                          ) : null}
-                        </div>
+                      {isUser && message.tool ? (
+                        <p className="text-muted mb-1 text-[11px] uppercase tracking-[0.14em]">
+                          {message.tool}
+                        </p>
                       ) : null}
-                      {message.uiType ? <p className="text-muted mt-2 text-[11px] uppercase tracking-[0.14em]">{message.uiType}</p> : null}
+                      {hasRichUI ? (
+                        <EphemeralRenderer
+                          message={{
+                            ...message,
+                            ui_payload:
+                              message.ui_payload || message.metadata || {},
+                          }}
+                          onAction={(action) => setInput(action)}
+                        />
+                      ) : typeof message.content === "string" ? (
+                        <p className="text-main whitespace-pre-wrap text-sm leading-relaxed">
+                          {message.content}
+                        </p>
+                      ) : (
+                        <pre className="text-main overflow-x-auto whitespace-pre-wrap text-xs leading-relaxed">
+                          {JSON.stringify(message.content, null, 2)}
+                        </pre>
+                      )}
                     </div>
                   </article>
                 );
               })}
             </div>
 
-            {sendError ? <p className="mt-3 rounded-xl border border-rose-400/25 bg-rose-400/10 px-3 py-2 text-sm text-rose-200">{sendError}</p> : null}
+            {sendError ? (
+              <p className="mt-3 rounded-xl border border-rose-400/25 bg-rose-400/10 px-3 py-2 text-sm text-rose-200">
+                {sendError}
+              </p>
+            ) : null}
 
             <form onSubmit={sendMessage} className="mt-4 flex flex-col gap-3">
               <div className="flex flex-col gap-3 md:flex-row md:items-center">
@@ -516,7 +473,11 @@ export default function ChatPage() {
                   onChange={(event) => setInput(event.target.value)}
                   placeholder="Ask about campaign strategy, ad variants, or outreach priorities..."
                 />
-                <button type="submit" className="btn-primary min-w-36" disabled={isSending}>
+                <button
+                  type="submit"
+                  className="btn-primary min-w-36"
+                  disabled={isSending}
+                >
                   <SendHorizonal className="h-4 w-4" />
                   {isSending ? "Running..." : "Send"}
                 </button>

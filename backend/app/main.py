@@ -12,10 +12,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .routes.agents import router as agents_router
 from app.core.config import get_settings
+from app.core.logging import setup_logging
 from app.tools.setup import setup_tool_registry
 from app.tools.mcp_client import init_mcp_client, close_mcp_client
 from app.api.research import router as research_router
 from app.api.alerts import router as alerts_router
+from app.api.campaign import router as campaign_router
 from app.routes.auth import router as auth_router
 from .routes.chat import router as chat_router
 from .routes.graph import router as graph_router
@@ -44,6 +46,7 @@ allowed_origins = sorted(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── Startup ────────────────────────────────────────────────────────────
+    setup_logging()                 # configure structured logging first
     setup_tool_registry()           # register all SDK tool wrappers
     await init_mcp_client()         # start MCP server processes (npx)
     yield
@@ -71,6 +74,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(research_router)
 app.include_router(alerts_router)
+app.include_router(campaign_router)
 app.include_router(agents_router)
 app.include_router(chat_router)
 app.include_router(graph_router)

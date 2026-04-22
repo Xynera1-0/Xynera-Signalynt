@@ -21,6 +21,9 @@ class ResearchState(MessagesState):
     workspace_context: dict = {}
     alert_context: dict | None = None          # injected by Temporal Poller if triggered
 
+    # ── KB context (injected by KB Reader before orchestrator) ─────────────
+    kb_context: dict = {}                      # growth signals + patterns from Neo4j
+
     # ── Parallel agent outputs (operator.add merges lists) ─────────────────
     agent_findings: Annotated[list[AgentFinding], operator.add] = []
 

@@ -70,8 +70,23 @@ class Settings(BaseSettings):
     agent_timeout_seconds: int = Field(default=30, alias="AGENT_TIMEOUT_SECONDS")
     confidence_threshold: float = Field(default=0.6, alias="CONFIDENCE_THRESHOLD")
 
+    # Auth — OAuth
+    google_client_id: str = Field(default="", alias="GOOGLE_CLIENT_ID")
+
     # BigQuery
     google_application_credentials: str = Field(default="", alias="GOOGLE_APPLICATION_CREDENTIALS")
+    bigquery_project_id: str = Field(default="", alias="BIGQUERY_PROJECT_ID")
+    bigquery_table_id: str = Field(default="", alias="BIGQUERY_TABLE_ID")
+    porter_table_id: str = Field(default="", alias="PORTER_TABLE_ID")
+
+    # Publishing: Zapier Webhooks
+    zapier_fb_webhook: str = Field(default="", alias="ZAPIER_FB_WEBHOOK")
+    zapier_li_webhook: str = Field(default="", alias="ZAPIER_LI_WEBHOOK")
+
+    # Neo4j (knowledge base)
+    neo4j_uri: str = Field(default="", alias="NEO4J_URI")
+    neo4j_username: str = Field(default="", alias="NEO4J_USERNAME")
+    neo4j_password: str = Field(default="", alias="NEO4J_PASSWORD")
 
     # Temporal Poller
     temporal_poller_interval_seconds: int = Field(default=900, alias="TEMPORAL_POLLER_INTERVAL_SECONDS")
