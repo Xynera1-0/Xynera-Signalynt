@@ -96,6 +96,9 @@ class CampaignExecutionAgent:
 		self.email_post_api_url = email_post_api_url or os.getenv("EMAIL_POST_API_URL", "").strip()
 		self.feedback_api_url = feedback_api_url or os.getenv("FEEDBACK_API_URL", "").strip()
 		self.api_bearer_token = api_bearer_token or os.getenv("PUBLISHER_API_BEARER_TOKEN", "").strip()
+		self.sendgrid_api_key = os.getenv("SENDGRID_API_KEY", "").strip()
+		self.email_from_address = os.getenv("EMAIL_FROM_ADDRESS", "").strip()
+		self.email_from_name = os.getenv("EMAIL_FROM_NAME", "Team Xynera").strip()
 
 	def posting_strategy_agent(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
 		content_bundle = input_data.get("content_bundle", {})
@@ -235,10 +238,14 @@ OUTPUT STRICTLY IN JSON:
 		}
 
 	def _post_email(self, email_payload: Dict[str, Any]) -> Dict[str, Any]:
+		sendgrid_result = self._post_email_via_sendgrid(email_payload)
+		if sendgrid_result is not None:
+			return sendgrid_result
+
 		if not self.email_post_api_url:
 			return {
 				"status": "skipped",
-				"reason": "EMAIL_POST_API_URL is not configured",
+				"reason": "Neither SendGrid nor EMAIL_POST_API_URL are configured",
 				"payload": email_payload,
 			}
 
@@ -253,6 +260,78 @@ OUTPUT STRICTLY IN JSON:
 			"channel": "email",
 			"response": response.data,
 		}
+
+	def _post_email_via_sendgrid(self, email_payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+		if not self.sendgrid_api_key:
+			return None
+
+		if not self.email_from_address:
+			return {
+				"status": "failed",
+				"channel": "email",
+				"reason": "EMAIL_FROM_ADDRESS is required when SENDGRID_API_KEY is configured",
+			}
+
+		recipients = self._normalize_recipients(email_payload.get("recipients", []))
+		if not recipients:
+			return {
+				"status": "skipped",
+				"channel": "email",
+				"reason": "No email recipients provided",
+				"payload": email_payload,
+			}
+
+		subject = str(email_payload.get("subject") or "Campaign Update")
+		body = str(email_payload.get("body") or "")
+		personalizations = [{"to": [{"email": recipient} for recipient in recipients]}]
+		sendgrid_payload: Dict[str, Any] = {
+			"personalizations": personalizations,
+			"from": {
+				"email": self.email_from_address,
+				"name": self.email_from_name,
+			},
+			"subject": subject,
+			"content": [
+				{"type": "text/plain", "value": body},
+			],
+		}
+
+		response = self.http.post_json(
+			url="https://api.sendgrid.com/v3/mail/send",
+			payload=sendgrid_payload,
+			headers={
+				"Content-Type": "application/json",
+				"Authorization": f"Bearer {self.sendgrid_api_key}",
+			},
+		)
+
+		return {
+			"status": "success" if 200 <= response.status_code < 300 else "failed",
+			"status_code": response.status_code,
+			"channel": "email",
+			"provider": "sendgrid",
+			"recipient_count": len(recipients),
+			"response": response.data,
+		}
+
+	@staticmethod
+	def _normalize_recipients(raw_recipients: Any) -> List[str]:
+		if isinstance(raw_recipients, str):
+			candidates = [item.strip() for item in raw_recipients.split(",")]
+		elif isinstance(raw_recipients, list):
+			candidates = [str(item).strip() for item in raw_recipients]
+		else:
+			candidates = []
+
+		seen = set()
+		unique_recipients: List[str] = []
+		for recipient in candidates:
+			if not recipient or recipient in seen:
+				continue
+			seen.add(recipient)
+			unique_recipients.append(recipient)
+
+		return unique_recipients
 
 	def _fetch_feedback(self, posting_results: Dict[str, Any]) -> Dict[str, Any]:
 		if not self.feedback_api_url:
