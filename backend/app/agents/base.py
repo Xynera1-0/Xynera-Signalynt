@@ -7,6 +7,7 @@ Tool resolution order:
   2. Direct SDK wrapper from tools/implementations/ (fallback when MCP server unavailable)
 """
 from __future__ import annotations
+import asyncio
 import json
 import logging
 import os
@@ -51,6 +52,28 @@ _RATE_LIMIT_MARKERS = (
 def _is_rate_limit(exc: Exception) -> bool:
     msg = str(exc).lower()
     return any(m in msg for m in _RATE_LIMIT_MARKERS)
+
+
+async def llm_ainvoke_with_retry(llm, messages, *, retries: int = 3, base_delay: float = 8.0):
+    """
+    Invoke an LLM with exponential-backoff retry on 429 / rate-limit errors.
+    Agents run in parallel and all share the same Groq org TPM quota, so
+    transient 429s are expected and should be retried rather than crashing the graph.
+    """
+    _log = logging.getLogger("app.agents.base")
+    for attempt in range(retries + 1):
+        try:
+            return await llm.ainvoke(messages)
+        except Exception as exc:
+            if _is_rate_limit(exc) and attempt < retries:
+                delay = base_delay * (2 ** attempt)
+                _log.warning(
+                    "llm_retry | 429 rate-limit, attempt=%d/%d, sleeping %.1fs — %s",
+                    attempt + 1, retries, delay, str(exc)[:120],
+                )
+                await asyncio.sleep(delay)
+            else:
+                raise
 
 
 class _GrokFallback:
@@ -133,6 +156,32 @@ def get_llm(temperature: float | None = None):
     return ChatGoogleGenerativeAI(
         model="gemini-3-flash-preview",
         google_api_key=s.google_api_key,
+        temperature=t,
+    )
+
+
+def get_content_llm(temperature: float | None = None):
+    """
+    LLM for content generation (strategist, generator, variant builder).
+    Uses qwen/qwen3-32b on Groq — separate quota from groq/compound used by research agents.
+    Falls back to gemini-3-flash-preview if no Groq key.
+    """
+    s = get_settings()
+    groq_key = os.environ.get("GROQ_API_KEY") or s.groq_api_key
+    google_key = os.environ.get("GOOGLE_API_KEY") or s.google_api_key
+    t = temperature if temperature is not None else s.agent_temperature
+
+    if groq_key:
+        logging.info("get_content_llm: using Groq qwen/qwen3-32b")
+        return ChatGroq(
+            model="qwen/qwen3-32b",
+            api_key=groq_key,
+            temperature=t,
+        )
+    logging.warning("get_content_llm: falling back to Gemini")
+    return ChatGoogleGenerativeAI(
+        model="gemini-3-flash-preview",
+        google_api_key=google_key,
         temperature=t,
     )
 

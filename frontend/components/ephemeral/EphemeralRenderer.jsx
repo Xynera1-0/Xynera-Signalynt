@@ -30,9 +30,6 @@ export default function EphemeralRenderer({ message, onAction, onExpand }) {
       return (
         <VariantComparisonGrid
           data={data}
-          onSelect={(variantName) =>
-            onAction?.(`Selected creative: ${variantName}`)
-          }
         />
       );
 

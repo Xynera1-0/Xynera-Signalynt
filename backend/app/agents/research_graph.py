@@ -1,6 +1,7 @@
 """
 Research Graph — full LangGraph wiring.
-KB Reader → Orchestrator → parallel Send fan-out → synthesis → conditional routing.
+KB Reader → Orchestrator → parallel Send fan-out → synthesis (+ report) → done.
+Synthesis node now handles both structured synthesis and user-facing report in one LLM call.
 """
 from __future__ import annotations
 import logging
@@ -11,7 +12,6 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from app.agents.state import ResearchState
 from app.agents.orchestrator import orchestrator_node, dispatch_to_agents
 from app.agents.synthesis import synthesis_node
-from app.agents.summarizer import summarizer_node
 from app.agents.trend_scout import trend_scout_node
 from app.agents.spy_scout import spy_scout_node
 from app.agents.anthropologist import anthropologist_node
@@ -20,10 +20,6 @@ from app.agents.temporal_agent import temporal_agent_research_node
 from app.db.kb_reader import read_relevant_kb_context
 
 logger = logging.getLogger(__name__)
-
-
-def routing_condition(state: ResearchState) -> str:
-    return state.get("routing", "to_user")
 
 
 async def kb_reader_node(state: ResearchState) -> dict:
@@ -48,31 +44,19 @@ def build_research_graph(checkpointer=None):
     builder.add_node("contextual_scout", contextual_scout_node)
     builder.add_node("temporal_agent_node", temporal_agent_research_node)
     builder.add_node("synthesis", synthesis_node)
-    builder.add_node("summarizer", summarizer_node)
 
-    # Entry: KB Reader → orchestrator (plan + store) → conditional fan-out via Send()
+    # Entry: KB Reader → orchestrator → conditional fan-out via Send()
     builder.set_entry_point("kb_reader")
     builder.add_edge("kb_reader", "orchestrator")
-    # dispatch_to_agents is a conditional edge function that returns list[Send]
-    # LangGraph requires Send() to originate from an edge function, not a node.
     builder.add_conditional_edges("orchestrator", dispatch_to_agents)
 
-    # Parallel agent nodes all converge to synthesis
+    # All parallel agent nodes converge to synthesis
     for agent_node in ("trend_scout", "spy_scout", "anthropologist", "contextual_scout", "temporal_agent_node"):
         builder.add_edge(agent_node, "synthesis")
 
-    # Synthesis → conditional routing
-    builder.add_conditional_edges(
-        "synthesis",
-        routing_condition,
-        {
-            "to_user": "summarizer",
-            "to_content_agent": END,
-        },
-    )
-
-    # Summarizer → done
-    builder.add_edge("summarizer", END)
+    # Synthesis writes user_report to state and decides routing internally;
+    # both paths end here — supervisor_graph reads user_report or content_brief as needed.
+    builder.add_edge("synthesis", END)
 
     return builder.compile(checkpointer=checkpointer)
 

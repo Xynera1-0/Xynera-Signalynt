@@ -303,6 +303,8 @@ async def run_content_team(state: SupervisorState) -> dict:
         content_brief = dict(content_brief)
 
     content_input = {
+        "user_query": state.get("user_query", ""),
+        "conversation_history": state.get("conversation_history", []),
         "content_brief": content_brief,
         "kb_context": state.get("kb_context", {}),
         "platforms": state.get("plan", {}).get("platforms", ["linkedin"]),
@@ -466,6 +468,8 @@ def route_after_plan(state: SupervisorState) -> str:
         return "chat"
     if route == "post_existing":
         return "post_existing"
+    if route == "content_only":
+        return "content_team"   # skip research entirely
     return "research_team"
 
 
@@ -502,7 +506,7 @@ def build_supervisor_graph():
     builder.add_conditional_edges(
         "planner",
         route_after_plan,
-        {"chat": "chat", "post_existing": "post_existing", "research_team": "research_team"},
+        {"chat": "chat", "post_existing": "post_existing", "content_team": "content_team", "research_team": "research_team"},
     )
     builder.add_edge("chat", END)
     builder.add_edge("post_existing", END)

@@ -15,9 +15,9 @@ import uuid
 from typing import TypedDict, List
 
 from langgraph.graph import StateGraph, END
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.agents.base import get_llm, coerce_llm_content
+from app.agents.base import get_content_llm, coerce_llm_content, llm_ainvoke_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +28,15 @@ logger = logging.getLogger(__name__)
 
 class ContentState(TypedDict, total=False):
     # ── Input (required at invocation) ──────────────────────────────
-    content_brief: dict
+    user_query: str                  # the raw user message — primary creative brief
+    conversation_history: list       # prior turns (newest last) for context
+    content_brief: dict              # synthesis data if research ran first
     kb_context: dict
     platforms: List[str]
     hypothesis: str
     # ── Intermediate ────────────────────────────────────────────
     strategy: dict
+    content_type: str                # detected content type: flyer | post | email | ...
     variants_plan: List[dict]
     base_contents: dict
     # ── Output ───────────────────────────────────────────────
@@ -47,77 +50,92 @@ class ContentState(TypedDict, total=False):
 
 async def content_strategist_node(state: ContentState) -> dict:
     logger.info("content_strategist | starting platforms=%s", state.get("platforms"))
-    llm = get_llm(temperature=0.3)
+    from app.agents.content_generation_agent import _TYPE_KEYWORDS
 
-    content_brief = state.get("content_brief", {})
-    kb_context = state.get("kb_context", {})
-    platforms = state.get("platforms", ["linkedin"])
+    llm = get_content_llm(temperature=0.3)
 
-    growth_signals = kb_context.get("growth_signals", [])
-    winning_patterns = kb_context.get("winning_patterns", [])
-    audience_insights = kb_context.get("audience_insights", [])
+    user_query = state.get("user_query") or ""
+    content_brief = state.get("content_brief") or {}
+    kb_context = state.get("kb_context") or {}
+    platforms = state.get("platforms") or ["linkedin"]
+    history = state.get("conversation_history") or []
 
-    prompt = f"""
-You are a content strategist for a data-driven marketing platform.
-Your job is to define the content strategy and A/B test design for this campaign.
+    # ── Detect content type from user query first ────────────────────────────
+    query_lower = user_query.lower()
+    detected_type = "flyer"  # default
+    for ctype, keywords in _TYPE_KEYWORDS.items():
+        if any(kw in query_lower for kw in keywords):
+            detected_type = ctype
+            break
+    logger.info("content_strategist | detected_type=%s", detected_type)
 
-Research brief:
-{json.dumps(content_brief, indent=2)[:2500]}
+    # ── Extract prior conversation context (selected variant, research, etc.) ─
+    history_text = ""
+    if history:
+        lines = [f"  [{m['role'].upper()}]: {m['content'][:400]}" for m in history[-8:]]
+        history_text = "\n─── Prior conversation (newest last) ───\n" + "\n".join(lines)
 
-Prior KB growth signals (from past campaigns on similar topics):
-{json.dumps(growth_signals[:5], indent=2)}
+    # ── Research data (may be empty for content_only route) ──────────────────
+    brief_text = ""
+    if content_brief:
+        brief_text = f"\nResearch findings brief:\n{json.dumps(content_brief, indent=2)[:2000]}"
 
-Winning content patterns from KB:
-{json.dumps(winning_patterns[:5], indent=2)}
+    # ── KB signals — cap each list tightly to avoid 413 ──────────────────────
+    growth_signals  = kb_context.get("growth_signals",  [])[:3]
+    winning_patterns = kb_context.get("winning_patterns", [])[:3]
+    audience_insights = kb_context.get("audience_insights", [])[:3]
+    kb_text = (
+        f"\nKB growth signals: {json.dumps(growth_signals, indent=2)[:600]}"
+        f"\nKB winning patterns: {json.dumps(winning_patterns, indent=2)[:600]}"
+        f"\nKB audience insights: {json.dumps(audience_insights, indent=2)[:600]}"
+    ) if (growth_signals or winning_patterns or audience_insights) else ""
 
-Audience response patterns from KB:
-{json.dumps(audience_insights[:5], indent=2)}
+    prompt = f"""You are a content strategist for a data-driven marketing platform.
+
+User request: {user_query}
+{history_text}
+{brief_text}
+{kb_text}
 
 Target platforms: {platforms}
+Content type to produce: {detected_type}
 
-Define:
-1. Primary angle (the core message — not a tagline, a strategic lens)
-2. Test hypothesis (what do you want to learn? e.g. "emotional hook outperforms rational for this audience")
-3. Variables to test (hook type, CTA style, format, length, etc.)
-4. 2–4 variant ideas with clear differentiation
-5. Content attributes per variant (hook_type, cta_type, format, tone)
+Instructions:
+- If the user has already selected a variant (e.g. "Variant A — Emotional Hook"), use that as the single variant plan. Do NOT invent new variants.
+- If the user references prior research findings or conversation context, use those details as the creative brief.
+- If no research or brief is available, use the user's request directly as the creative brief — infer the minimum context needed, do not hallucinate details.
+- Set primary_angle to reflect exactly what the user asked for.
 
-Return JSON:
+Return JSON only:
 {{
   "primary_angle": "...",
   "hypothesis": "...",
-  "test_variables": ["hook_type", "cta_style"],
+  "test_variables": ["hook_type"],
   "variants": [
     {{
       "name": "Variant A — Emotional Hook",
       "hook_type": "emotional",
       "cta_type": "urgency",
-      "format": "carousel",
+      "format": "{detected_type}",
       "tone": "conversational",
-      "angle": "pain point first, solution second",
+      "angle": "...",
       "is_control": true
-    }},
-    {{
-      "name": "Variant B — Rational Hook",
-      "hook_type": "rational",
-      "cta_type": "value",
-      "format": "single_image",
-      "tone": "professional",
-      "angle": "lead with data and results",
-      "is_control": false
     }}
   ]
-}}
-"""
-    response = await llm.ainvoke([HumanMessage(content=prompt)])
+}}"""
+
+    response = await llm_ainvoke_with_retry(llm, [
+        SystemMessage(content="You are a content strategist. Return valid JSON only."),
+        HumanMessage(content=prompt),
+    ])
     content = coerce_llm_content(response.content) if hasattr(response, "content") else str(response)
     strategy = _parse_json(content)
 
     logger.info("content_strategist | completed angle=%r variants_planned=%d",
-                 strategy.get("primary_angle", "")[:60], len(strategy.get("variants", [])))
-    # Return only changed fields
+                strategy.get("primary_angle", "")[:60], len(strategy.get("variants", [])))
     return {
         "strategy": strategy,
+        "content_type": detected_type,
         "variants_plan": strategy.get("variants", []),
         "hypothesis": strategy.get("hypothesis", ""),
     }
@@ -132,26 +150,36 @@ async def content_generator_node(state: ContentState) -> dict:
     logger.info("content_generator | starting platforms=%s", state.get("platforms"))
     from app.agents.content_generation_agent import ContentAgentPool
 
-    llm = get_llm(temperature=0.7)
+    llm = get_content_llm(temperature=0.7)
     pool = ContentAgentPool(llm=llm)
 
-    content_brief = state.get("content_brief", {})
-    strategy = state.get("strategy", {})
-    platforms = state.get("platforms", ["linkedin"])
+    user_query = state.get("user_query") or ""
+    content_brief = state.get("content_brief") or {}
+    strategy = state.get("strategy") or {}
+    platforms = state.get("platforms") or ["linkedin"]
+    # content_type detected by strategist; fall back to query detection
+    content_type = state.get("content_type") or "flyer"
 
     base_contents = {}
     for platform in platforms:
+        # Build a compact brief — user_query is the primary creative directive
+        synthesis_data = content_brief.get("synthesis") or {}
+        key_themes = synthesis_data.get("key_themes", []) if isinstance(synthesis_data, dict) else []
+        research_summary = synthesis_data.get("summary", "") if isinstance(synthesis_data, dict) else str(synthesis_data)
+
         input_data = {
-            **content_brief,
+            "prompt": user_query or research_summary or strategy.get("primary_angle", ""),
             "platform": platform,
             "primary_angle": strategy.get("primary_angle", ""),
-            "tone": "professional",
-            "prompt": content_brief.get("synthesis", {}).get("key_themes", [""])[0] if isinstance(content_brief.get("synthesis"), dict) else str(content_brief.get("synthesis", "")),
+            "tone": strategy.get("variants", [{}])[0].get("tone", "professional") if strategy.get("variants") else "professional",
+            "goal": content_brief.get("objective", ""),
+            "key_themes": key_themes[:3],
         }
         try:
-            result = pool.content_agent(input_data)
+            result = pool.content_agent(input_data, content_type)
             base_contents[platform] = result
         except Exception as e:
+            logger.warning("content_generator | platform=%s error=%s", platform, e)
             base_contents[platform] = {"error": str(e)}
 
     ok = [p for p, v in base_contents.items() if "error" not in v]

@@ -6,7 +6,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 import logging
 
-from app.agents.base import get_llm, agent_finding_from_llm_json, coerce_llm_content, log_tool_results
+from app.agents.base import get_llm, agent_finding_from_llm_json, coerce_llm_content, log_tool_results, llm_ainvoke_with_retry
 from app.agents.prompts import SPY_SCOUT_PROMPT
 from app.agents.state import ResearchState
 from app.tools.registry import get_tools_for
@@ -100,7 +100,7 @@ async def spy_scout_node(state: ResearchState, db=None) -> dict:
             logger.info("spy_scout | Moz query domain=%s results=%d", dom, len(results))
 
     tool_context = "\n\n".join(
-        f"[{r.tool_name}] {r.source_name or ''}\nURL: {r.source_url or 'N/A'}\n{r.content[:600]}"
+        f"[{r.tool_name}] {r.source_name or ''}\nURL: {r.source_url or 'N/A'}\n{r.content[:250]}"
         for r in tool_results if not r.error and r.content
     )
 
@@ -108,9 +108,9 @@ async def spy_scout_node(state: ResearchState, db=None) -> dict:
     synthesis_prompt = (
         f"Based on the following competitive intelligence data, return ONLY a JSON object "
         f"matching the schema in your instructions. No markdown, no explanation.\n\n"
-        f"FOCUS: {focus}\n\nDATA:\n{tool_context[:8000]}"
+        f"FOCUS: {focus}\n\nDATA:\n{tool_context[:4000]}"
     )
-    response = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=synthesis_prompt)])
+    response = await llm_ainvoke_with_retry(llm, [SystemMessage(content=system), HumanMessage(content=synthesis_prompt)])
     llm_text = coerce_llm_content(response.content) if hasattr(response, "content") else str(response)
     logger.info("spy_scout | llm_raw_prefix=%r", llm_text[:300])
 

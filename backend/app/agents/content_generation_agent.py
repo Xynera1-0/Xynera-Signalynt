@@ -223,16 +223,25 @@ OUTPUT STRICTLY IN JSON:
     # ── LLM wrapper ────────────────────────────────────────────────────────────
 
     def _call_llm(self, prompt: str) -> Dict:
+        """Call the LangChain LLM and parse JSON from the response."""
         text = ""
         try:
-            response = self.llm.generate_content(prompt)
-            text = (response.text or "").strip()
-            text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
-            text = re.sub(r"\s*```$", "", text)
-
+            from langchain_core.messages import HumanMessage
+            response = self.llm.invoke([HumanMessage(content=prompt)])
+            text = response.content if hasattr(response, "content") else str(response)
+            text = text.strip()
+            # Strip <think> blocks (qwen reasoning model)
+            import re as _re
+            text = _re.sub(r"<think>[\s\S]*?</think>", "", text, flags=_re.IGNORECASE).strip()
+            text = _re.sub(r"^```(?:json)?\s*", "", text, flags=_re.IGNORECASE)
+            text = _re.sub(r"\s*```$", "", text)
+            # Extract first JSON object
+            m = _re.search(r"\{[\s\S]*\}", text)
+            if m:
+                return json.loads(m.group(0))
             return json.loads(text)
-        except Exception:
+        except Exception as exc:
             return {
-                "error": "Parsing failed",
-                "raw_output": text if text else "No response",
+                "error": f"Parsing failed: {exc}",
+                "raw_output": text[:300] if text else "No response",
             }

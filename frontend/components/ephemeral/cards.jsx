@@ -1,11 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import {
   ArrowUpRight,
   BarChart3,
-  CircleGauge,
   CheckCircle2,
-  ChevronRight,
+  CircleGauge,
   Clock,
   Download,
   Sparkles,
@@ -506,56 +506,144 @@ export function SignalMap({ data }) {
 }
 
 export function VariantComparisonGrid({ data, onSelect }) {
+  const [selected, setSelected] = useState(null);
+
+  function handleSelect(variant) {
+    setSelected(variant);
+    // Do NOT call onSelect — that would send a new message to the backend.
+    // The content is already in the variant payload; we expand it inline.
+  }
+
+  const content = selected?.content || {};
+  const variations = content.variations || {};
+
   return (
     <div className="card animate-slide-up">
       <div className="mb-4 flex items-center gap-2 text-main">
         <BarChart3 className="h-4 w-4 text-brand-300" />
         <p className="text-sm font-semibold">Creative variant comparison</p>
       </div>
+
+      {/* Variant selection grid */}
       <div className="grid gap-3 md:grid-cols-3">
-        {(data.variants || []).map((variant) => (
-          <button
-            key={variant.name}
-            type="button"
-            onClick={() => onSelect?.(variant.name)}
-            className="group rounded-xl border p-4 text-left transition hover:border-brand-400/40"
-            style={{
-              borderColor: "var(--card-border)",
-              background: "var(--card-bg)",
-            }}
-          >
-            <div className="flex items-center justify-between">
-              <p className="text-main text-sm font-semibold">{variant.name}</p>
-              {variant.is_control && (
-                <span className="rounded-full bg-slate-700 px-2 py-0.5 text-xs text-slate-300">
-                  Control
-                </span>
-              )}
-            </div>
-            <div className="text-soft mt-3 space-y-2 text-xs">
-              <p>
-                CTR: <span className="text-brand-300">{variant.ctr}%</span>
-              </p>
-              <p>
-                CVR: <span className="text-brand-300">{variant.cvr}%</span>
-              </p>
-              <p>
-                Sentiment:{" "}
-                <span className="text-amber-500">{variant.sentiment}</span>
-              </p>
-              {variant.platform && (
+        {(data.variants || []).map((variant) => {
+          const isSelected = selected?.name === variant.name;
+          return (
+            <button
+              key={variant.name}
+              type="button"
+              onClick={() => handleSelect(variant)}
+              className={`group rounded-xl border p-4 text-left transition ${
+                isSelected
+                  ? "border-brand-400 bg-brand-400/5 ring-1 ring-brand-400/30"
+                  : "hover:border-brand-400/40"
+              }`}
+              style={isSelected ? {} : {
+                borderColor: "var(--card-border)",
+                background: "var(--card-bg)",
+              }}
+            >
+              <div className="flex items-center justify-between">
+                <p className="text-main text-sm font-semibold">{variant.name}</p>
+                <div className="flex items-center gap-1">
+                  {isSelected && (
+                    <CheckCircle2 className="h-4 w-4 text-brand-300" />
+                  )}
+                  {variant.is_control && (
+                    <span className="rounded-full bg-slate-700 px-2 py-0.5 text-xs text-slate-300">
+                      Control
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="text-soft mt-3 space-y-2 text-xs">
                 <p>
-                  Platform:{" "}
-                  <span className="text-slate-300">{variant.platform}</span>
+                  CTR: <span className="text-brand-300">{variant.ctr}%</span>
+                </p>
+                <p>
+                  CVR: <span className="text-brand-300">{variant.cvr}%</span>
+                </p>
+                <p>
+                  Sentiment:{" "}
+                  <span className="text-amber-500">{variant.sentiment}</span>
+                </p>
+                {variant.platform && (
+                  <p>
+                    Platform:{" "}
+                    <span className="text-slate-300">{variant.platform}</span>
+                  </p>
+                )}
+              </div>
+              {!isSelected && (
+                <p className="mt-3 inline-flex items-center gap-1 text-xs text-brand-300 opacity-0 transition group-hover:opacity-100">
+                  View content <ArrowUpRight className="h-3 w-3" />
                 </p>
               )}
-            </div>
-            <p className="mt-3 inline-flex items-center gap-1 text-xs text-brand-300 opacity-0 transition group-hover:opacity-100">
-              Choose variant <ArrowUpRight className="h-3 w-3" />
-            </p>
-          </button>
-        ))}
+            </button>
+          );
+        })}
       </div>
+
+      {/* Inline content panel — shown when a variant is selected */}
+      {selected && (
+        <div className="mt-5 rounded-xl border border-brand-400/20 bg-[#0f1929] p-4 space-y-3 animate-slide-up">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-brand-300" />
+            <p className="text-sm font-semibold text-brand-200">{selected.name}</p>
+            <span className="ml-auto text-[10px] uppercase tracking-widest text-slate-500">
+              {selected.platform}
+            </span>
+          </div>
+
+          {content.headline && (
+            <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-3">
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Headline</p>
+              <p className="text-sm font-bold text-main">{content.headline}</p>
+            </div>
+          )}
+
+          {content.body && (
+            <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-3">
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Body copy</p>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-200">{content.body}</p>
+            </div>
+          )}
+
+          {content.cta && (
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-400">CTA:</span>
+              <span className="text-sm text-slate-200">{content.cta}</span>
+            </div>
+          )}
+
+          {Object.keys(variations).length > 0 && (
+            <details className="rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2">
+              <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wider text-slate-400 hover:text-brand-300">
+                Tone variations
+              </summary>
+              <div className="mt-3 space-y-3">
+                {Object.entries(variations).map(([tone, copy]) => (
+                  <div key={tone}>
+                    <p className="text-[10px] font-semibold capitalize text-slate-500">{tone}</p>
+                    <p className="text-xs text-slate-300">{copy}</p>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+
+          {content.platform_output && (
+            <details className="rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2">
+              <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wider text-slate-400 hover:text-brand-300">
+                Platform output
+              </summary>
+              <p className="mt-2 whitespace-pre-wrap text-xs text-slate-300">{content.platform_output}</p>
+            </details>
+          )}
+        </div>
+      )}
+
+      {/* Growth signals */}
       {(data.growth_signals || []).length > 0 && (
         <div className="mt-4 rounded-xl border border-emerald-900/40 bg-emerald-950/20 p-3">
           <p className="mb-2 text-xs font-semibold text-emerald-300">

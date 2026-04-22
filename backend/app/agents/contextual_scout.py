@@ -6,7 +6,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 import logging
 
-from app.agents.base import get_llm, agent_finding_from_llm_json, coerce_llm_content, log_tool_results
+from app.agents.base import get_llm, agent_finding_from_llm_json, coerce_llm_content, log_tool_results, llm_ainvoke_with_retry
 from app.agents.prompts import CONTEXTUAL_SCOUT_PROMPT
 from app.agents.state import ResearchState
 from app.tools.registry import get_tools_for
@@ -44,7 +44,7 @@ async def contextual_scout_node(state: ResearchState, db=None) -> dict:
         tool_results.extend(results)
 
     tool_context = "\n\n".join(
-        f"[{r.tool_name}] {r.source_name or ''}\nURL: {r.source_url or 'N/A'}\n{r.content[:600]}"
+        f"[{r.tool_name}] {r.source_name or ''}\nURL: {r.source_url or 'N/A'}\n{r.content[:300]}"
         for r in tool_results if not r.error and r.content
     )
 
@@ -53,9 +53,9 @@ async def contextual_scout_node(state: ResearchState, db=None) -> dict:
         f"Based on the following cross-domain intelligence, produce your findings as JSON "
         f"(same schema as briefed). Be explicit about signal confidence — patent = weak, "
         f"multiple confirming signals = strong.\n\n"
-        f"FOCUS: {focus}\n\nDATA:\n{tool_context[:8000]}"
+        f"FOCUS: {focus}\n\nDATA:\n{tool_context[:4000]}"
     )
-    response = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=synthesis_prompt)])
+    response = await llm_ainvoke_with_retry(llm, [SystemMessage(content=system), HumanMessage(content=synthesis_prompt)])
     llm_text = coerce_llm_content(response.content) if hasattr(response, "content") else str(response)
 
     from app.agents.trend_scout import _extract_json
