@@ -538,13 +538,19 @@ export function VariantComparisonGrid({ data, onSelect }) {
                   ? "border-brand-400 bg-brand-400/5 ring-1 ring-brand-400/30"
                   : "hover:border-brand-400/40"
               }`}
-              style={isSelected ? {} : {
-                borderColor: "var(--card-border)",
-                background: "var(--card-bg)",
-              }}
+              style={
+                isSelected
+                  ? {}
+                  : {
+                      borderColor: "var(--card-border)",
+                      background: "var(--card-bg)",
+                    }
+              }
             >
               <div className="flex items-center justify-between">
-                <p className="text-main text-sm font-semibold">{variant.name}</p>
+                <p className="text-main text-sm font-semibold">
+                  {variant.name}
+                </p>
                 <div className="flex items-center gap-1">
                   {isSelected && (
                     <CheckCircle2 className="h-4 w-4 text-brand-300" />
@@ -589,7 +595,9 @@ export function VariantComparisonGrid({ data, onSelect }) {
         <div className="mt-5 rounded-xl border border-brand-400/20 bg-[#0f1929] p-4 space-y-3 animate-slide-up">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="h-4 w-4 text-brand-300" />
-            <p className="text-sm font-semibold text-brand-200">{selected.name}</p>
+            <p className="text-sm font-semibold text-brand-200">
+              {selected.name}
+            </p>
             <span className="ml-auto text-[10px] uppercase tracking-widest text-slate-500">
               {selected.platform}
             </span>
@@ -597,21 +605,29 @@ export function VariantComparisonGrid({ data, onSelect }) {
 
           {content.headline && (
             <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-3">
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Headline</p>
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                Headline
+              </p>
               <p className="text-sm font-bold text-main">{content.headline}</p>
             </div>
           )}
 
           {content.body && (
             <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-3">
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Body copy</p>
-              <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-200">{content.body}</p>
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                Body copy
+              </p>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-200">
+                {content.body}
+              </p>
             </div>
           )}
 
           {content.cta && (
             <div className="flex items-center gap-2">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-400">CTA:</span>
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-400">
+                CTA:
+              </span>
               <span className="text-sm text-slate-200">{content.cta}</span>
             </div>
           )}
@@ -624,7 +640,9 @@ export function VariantComparisonGrid({ data, onSelect }) {
               <div className="mt-3 space-y-3">
                 {Object.entries(variations).map(([tone, copy]) => (
                   <div key={tone}>
-                    <p className="text-[10px] font-semibold capitalize text-slate-500">{tone}</p>
+                    <p className="text-[10px] font-semibold capitalize text-slate-500">
+                      {tone}
+                    </p>
                     <p className="text-xs text-slate-300">{copy}</p>
                   </div>
                 ))}
@@ -637,7 +655,9 @@ export function VariantComparisonGrid({ data, onSelect }) {
               <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wider text-slate-400 hover:text-brand-300">
                 Platform output
               </summary>
-              <p className="mt-2 whitespace-pre-wrap text-xs text-slate-300">{content.platform_output}</p>
+              <p className="mt-2 whitespace-pre-wrap text-xs text-slate-300">
+                {content.platform_output}
+              </p>
             </details>
           )}
         </div>

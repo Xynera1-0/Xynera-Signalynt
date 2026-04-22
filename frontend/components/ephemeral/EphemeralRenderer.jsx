@@ -27,11 +27,7 @@ export default function EphemeralRenderer({ message, onAction, onExpand }) {
       if (data.result?.content_type && data.result.content_type !== "flyer") {
         return <ContentCard data={data} />;
       }
-      return (
-        <VariantComparisonGrid
-          data={data}
-        />
-      );
+      return <VariantComparisonGrid data={data} />;
 
     case "channel_selector":
       return (
