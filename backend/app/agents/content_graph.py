@@ -181,6 +181,35 @@ async def content_generator_node(state: ContentState) -> dict:
         except Exception as e:
             logger.warning("content_generator | platform=%s error=%s", platform, e)
             base_contents[platform] = {"error": str(e)}
+            continue
+
+        # ── Image generation for visual content types ─────────────────────────
+        if content_type == "flyer" and "error" not in result:
+            try:
+                import asyncio as _asyncio
+                from app.agents.content_generation_service import generate_flyer_image
+                # Get design spec for a better image prompt (sync call in thread)
+                design = await _asyncio.to_thread(pool.design_agent, result, "flyer")
+                # Pass the primary headline for mood context in the image prompt
+                _img_input = {
+                    **input_data,
+                    "headline": (result.get("headlines") or [""])[0],
+                }
+                flyer_img = await _asyncio.to_thread(
+                    generate_flyer_image,
+                    _img_input,
+                    {"design": design},
+                )
+                if flyer_img:
+                    image_url = (
+                        flyer_img.get("cloudinary_secure_url")
+                        or flyer_img.get("source_url")
+                        or flyer_img.get("cloudinary_url")
+                    )
+                    base_contents[platform]["flyer_image_url"] = image_url
+                    logger.info("content_generator | flyer image generated url=%s", image_url)
+            except Exception as img_err:
+                logger.warning("content_generator | image generation failed: %s", img_err)
 
     ok = [p for p, v in base_contents.items() if "error" not in v]
     fail = [p for p, v in base_contents.items() if "error" in v]
@@ -245,6 +274,7 @@ async def variant_builder_node(state: ContentState) -> dict:
                 "body": base.get("body", ""),
                 "cta": base.get("cta", ""),
                 "platform_output": base.get("platform_output", ""),
+                "flyer_image_url": base.get("flyer_image_url", ""),
             },
             "variable_values": {},
         }]
@@ -269,6 +299,7 @@ async def variant_builder_node(state: ContentState) -> dict:
                     "body": _pick_body(base, tone),
                     "cta": base.get("cta", ""),
                     "platform_output": base.get("platform_output", ""),
+                    "flyer_image_url": base.get("flyer_image_url", ""),
                 },
                 "variable_values": {
                     "hook": variant_spec.get("hook_type", ""),

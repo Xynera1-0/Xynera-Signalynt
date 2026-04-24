@@ -49,6 +49,7 @@ class SupervisorState(TypedDict, total=False):
     route: str
     # route values:
     #   chat             — generic / conversational message, direct LLM reply
+    #   clarify          — content requested but type is ambiguous, ask user a question
     #   research_only    — insights only, no content
     #   content_only     — user provides brief, skip research
     #   research_content — research + create content, don't post
@@ -208,12 +209,28 @@ Intent options:
                      (greetings, questions about the platform, small talk, "what can you do?",
                       "hi", "hello", "thanks", general questions etc.).
                      Use this when the message does NOT request campaign work.
+  clarify          — User WANTS content but has NOT specified what FORMAT/TYPE.
+                     Use this when the request is vague about content type (e.g. "make something
+                     for my product", "I need marketing content" with no mention of flyer/post/
+                     email/slogan/blog). Ask a SHORT, friendly clarifying question listing the
+                     options (flyer, social post, email, slogan, blog) so you can proceed.
+                     Do NOT use this if the message already contains a clear content type keyword.
   research_only    — user wants insights/research only, no content or posting
-  content_only     — user provides a brief and wants content created, skip research
+  content_only     — user provides a brief and wants content created, skip research.
+                     Content type MUST be clear (flyer / linkedin post / instagram / email /
+                     slogan / blog / strategy). If it is NOT clear, use 'clarify' instead.
   research_content — user wants research + content created but NOT posted yet
   post_existing    — user wants to publish content from a PREVIOUS campaign
                      (e.g. "post last week's campaign", "post the LinkedIn draft we made")
   full_campaign    — full loop: research → create content → A/B test → publish → analytics
+
+Content type keywords (use to decide if type is clear):
+  flyer/banner/poster/visual/graphic/ad → flyer
+  linkedin/instagram/facebook/twitter/post/caption/social → social post
+  email/newsletter/outreach/cold email → email
+  slogan/tagline/catchphrase/motto → slogan
+  blog/article/long-form → blog
+  strategy/plan/brief/roadmap/gtm → strategy
 
 For post_existing:
   - Match the user's description to one of the available campaigns above
@@ -226,7 +243,7 @@ For content creation routes:
 Return JSON only:
 {{
   "route": "chat",
-  "chat_response": "friendly reply if route is chat, else null",
+  "chat_response": "friendly reply if route is chat OR clarify question if route is clarify, else null",
   "objective": "engagement",
   "hypothesis": "...",
   "test_design": "...",
@@ -464,7 +481,7 @@ async def chat_node(state: SupervisorState) -> dict:
 def route_after_plan(state: SupervisorState) -> str:
     """First routing decision — right after the planner runs."""
     route = state.get("route", "full_campaign")
-    if route == "chat":
+    if route in ("chat", "clarify"):
         return "chat"
     if route == "post_existing":
         return "post_existing"

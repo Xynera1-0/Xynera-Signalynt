@@ -149,19 +149,27 @@ def run_content_generation(input_data: dict) -> dict:
 
 def _build_flyer_image_prompt(input_data: dict, result: dict) -> str:
     brand_hint = input_data.get("prompt") or input_data.get("goal") or "product"
+    headline = input_data.get("headline", "")  # used for mood/tone only, NOT rendered in image
     design = result.get("design") or {}
-    visual_hint = (design.get("visual_elements") or "professional product photography")[:250]
-    color_hint = (design.get("color_palette") or "modern neutral tones")[:200]
+    visual_hint = (design.get("visual_elements") or "rich cinematic product photography")[:250]
+    color_hint = (design.get("color_palette") or "rich, vibrant, saturated tones")[:200]
 
-    # Instruct the model to generate ONLY a background image — text is overlaid in the UI.
+    # Build a pure photographic scene prompt.
+    # CRITICAL: never say "flyer", "poster", "text", "typography", "banner" — these
+    # words cause Pollinations to hallucinate text/logos in the output.
+    # All text/typography is rendered in HTML on top; image is background-only.
+    mood_hint = f" Mood and feeling inspired by: {headline[:80]}." if headline else ""
     return (
-        "BACKGROUND ONLY. STRICTLY NO TEXT. NO WORDS. NO LETTERS. NO NUMBERS. NO TYPOGRAPHY. "
-        "NO CAPTIONS. NO WATERMARKS. Pure visual background image for a marketing flyer. "
-        f"Product theme: {brand_hint}. "
-        f"Visual elements: {visual_hint}. "
-        f"Colour scheme: {color_hint}. "
-        "High quality photography or illustration, portrait orientation, cinematic lighting, "
-        "clean composition with breathing room at top and bottom for text overlay, print-ready."
+        f"Photorealistic advertising photography of {brand_hint}."
+        f"{mood_hint} "
+        f"{visual_hint}. "
+        f"Color palette: {color_hint}. "
+        "Cinematic lighting, shallow depth of field, professional commercial photography style. "
+        "Portrait orientation 2:3 ratio. Upper area bright and vibrant, lower third gradually "
+        "darkens into deep shadow — no subjects or focal points in the bottom 30% of the image. "
+        "Ultra high resolution, sharp focus on product, soft bokeh background. "
+        "Absolutely no text, no words, no letters, no numbers, no signs, no labels, "
+        "no watermarks, no logos, no captions anywhere in the image. Pure visual only."
     )
 
 

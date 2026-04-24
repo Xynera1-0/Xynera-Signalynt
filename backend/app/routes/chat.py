@@ -280,6 +280,7 @@ def create_message(conversation_id: str, payload: MessageCreateRequest, token_us
 
 ROUTE_TO_UI_TYPE = {
     "chat":             "text",
+    "clarify":          "text",
     "research_only":    "research_brief",
     "content_only":     "variant_comparison",
     "research_content": "variant_comparison",
@@ -295,8 +296,8 @@ def _format_graph_result(result: dict) -> tuple[str, str, dict, list]:
     """
     route = result.get("route", "full_campaign")
     ui_type = ROUTE_TO_UI_TYPE.get(route, "text")
-    # ── chat (generic / conversational) ───────────────────────────────────────
-    if route == "chat":
+    # ── chat / clarify (conversational or type-disambiguation) ───────────────
+    if route in ("chat", "clarify"):
         reply = result.get("chat_reply") or "I'm here to help with your campaigns."
         import re as _re
         reply = _re.sub(r"<think>[\s\S]*?</think>", "", reply, flags=_re.IGNORECASE).strip()
@@ -367,9 +368,16 @@ def _format_graph_result(result: dict) -> tuple[str, str, dict, list]:
                 "platform": v.get("platform", "linkedin"),
                 "is_control": v.get("is_control", False),
                 "content": v.get("content", {}),
+                "flyerImageUrl": v.get("content", {}).get("flyer_image_url") or "",
             }
             for i, v in enumerate(variants)
         ]
+        # First flyer image URL across all variants — stored in DB artifacts
+        first_flyer_url = next(
+            (v.get("content", {}).get("flyer_image_url") for v in variants
+             if v.get("content", {}).get("flyer_image_url")),
+            None,
+        )
         summary = (
             f"{len(variants)} variants created"
             + (f" | {len(growth_signals)} growth signals detected" if growth_signals else "")
@@ -378,7 +386,11 @@ def _format_graph_result(result: dict) -> tuple[str, str, dict, list]:
         return (
             summary,
             ui_type,
-            {"variants": ui_variants, "growth_signals": growth_signals},
+            {
+                "variants": ui_variants,
+                "growth_signals": growth_signals,
+                "flyer_image_source_url": first_flyer_url,
+            },
             signal_ids,
         )
 
@@ -457,6 +469,17 @@ def _db_upsert_conversation_and_save_messages(
                 Json(ui_payload),
             ),
         )
+        # Store flyer image as artifact if present
+        flyer_url = ui_payload.get("flyer_image_source_url") if isinstance(ui_payload, dict) else None
+        if flyer_url:
+            cursor.execute(
+                """
+                INSERT INTO public.artifacts (message_id, type, file_url, source_signals)
+                VALUES (%s::uuid, %s, %s, %s)
+                ON CONFLICT DO NOTHING;
+                """,
+                (assistant_msg_id, "flyer", flyer_url, Json({"signal_ids": [s for s in signal_ids if s]})),
+            )
 
 
 @router.post("/conversations/{conversation_id}/send")
